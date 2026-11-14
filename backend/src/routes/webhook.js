@@ -2,6 +2,7 @@ const express = require('express');
 const config = require('../lib/config');
 const { logError } = require('../lib/logger');
 const { recordCall, processCall } = require('../services/pipeline');
+const { handleOwnerWebhook } = require('../services/ownerCalls');
 
 const router = express.Router();
 
@@ -40,6 +41,17 @@ router.post('/sarvam', verifySecret, async (req, res) => {
 
   res.status(202).json({ ok: true, client_id: recorded.client.id });
   processCall(recorded).catch((err) => logError(recorded.client.id, 'PIPELINE', err));
+});
+
+// POST /webhook/sarvam/owner — result of a call to Harshavardhan (summary / approval).
+router.post('/sarvam/owner', verifySecret, async (req, res) => {
+  try {
+    const result = await handleOwnerWebhook(req.body);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    await logError(null, 'OWNER_WEBHOOK', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

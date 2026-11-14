@@ -10,6 +10,8 @@ const webhookRoutes = require('./routes/webhook');
 const dashboardRoutes = require('./routes/dashboard');
 const clientRoutes = require('./routes/clients');
 const campaignRoutes = require('./routes/campaigns');
+const approvalRoutes = require('./routes/approvals');
+const { startOwnerCallWorker } = require('./services/ownerCalls');
 
 process.env.TZ = 'Asia/Kolkata'; // console timestamps in IST; all date math is explicit IST anyway
 
@@ -73,6 +75,7 @@ app.use('/api/dashboard', requireAdmin, dashboardRoutes);
 app.use('/api/clients', requireAdmin, clientRoutes);
 app.use('/api/campaigns', requireAdmin, campaignRoutes);
 app.use('/api/campaign', requireAdmin, campaignRoutes);
+app.use('/api/approvals', requireAdmin, approvalRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -88,6 +91,7 @@ const server = app.listen(config.port, () => {
   console.log(`🚀 Infinity automation backend on :${config.port}`);
   console.log(`   Webhook: ${config.publicBaseUrl}/webhook/sarvam${config.webhookSecret ? '?secret=…' : ''}`);
   console.log('   Integrations:', config.isConfigured);
+  startOwnerCallWorker();
   if (!config.adminToken) console.warn('⚠️  ADMIN_TOKEN not set — dashboard API is open. Set it in production.');
 });
 

@@ -38,7 +38,7 @@ function webhookConfig(campaignId) {
 }
 
 /** Instant outbound call (used for the end-of-campaign summary call to Harshavardhan). */
-async function placeOutboundCall({ phoneNumber, appId, appVersion, variables }) {
+async function placeOutboundCall({ phoneNumber, appId, appVersion, variables, webhook }) {
   const { orgId, workspaceId } = base();
   return sarvamRequest('POST', `/outbounds/v1/orgs/${orgId}/workspaces/${workspaceId}/outbounds`, {
     app_config: {
@@ -49,6 +49,7 @@ async function placeOutboundCall({ phoneNumber, appId, appVersion, variables }) 
       agent_variables: Object.fromEntries(Object.entries(variables).map(([k, v]) => [k, String(v)])),
     },
     user_config: { user_phone_number: toE164(phoneNumber) },
+    ...(webhook ? { webhook_config: webhook } : {}),
   });
 }
 
@@ -143,7 +144,8 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
 
 /**
  * After all calls in a campaign are processed, phone Harshavardhan with a spoken summary.
- * Idempotent: only fires once per campaign (summary_call_sent flag).
+ * Idempotent: only fires once per campaign (summary_call_sent flag). The call itself goes
+ * through the owner-call queue so it never overlaps an approval call.
  */
 async function triggerSummaryCall(campaignId) {
   // Atomically claim the summary so concurrent webhooks can't double-call.
@@ -156,7 +158,7 @@ async function triggerSummaryCall(campaignId) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   const booked = await prisma.client.findMany({
     where: { campaign_id: campaignId, call_outcome: 'BOOKED' },
-    select: { business_name: true, contact_name: true, meeting_link: true },
+    select: { business_name: true, meeting_link: true },
   });
   const variables = {
     booked_count: campaign.booked,
@@ -167,28 +169,10 @@ async function triggerSummaryCall(campaignId) {
     meets_scheduled: booked.filter((c) => c.meeting_link).length,
   };
 
-  if (!config.isConfigured.sarvam || !config.sarvam.summaryAgentId || !config.ownerPhone) {
-    await logAction(null, 'SUMMARY_CALL_MOCK',
-      `Campaign "${campaign.name}" complete — summary call not placed (Sarvam/summary agent/phone not configured). Variables: ${JSON.stringify(variables)}`);
-    return { mock: true, variables };
-  }
-
-  try {
-    const result = await placeOutboundCall({
-      phoneNumber: config.ownerPhone,
-      appId: config.sarvam.summaryAgentId,
-      appVersion: config.sarvam.summaryAgentVersion,
-      variables,
-    });
-    await logAction(null, 'SUMMARY_CALL_PLACED',
-      `Campaign "${campaign.name}" summary call to owner (attempt ${result.attempt_id}). ${JSON.stringify(variables)}`);
-    return { attemptId: result.attempt_id, variables };
-  } catch (err) {
-    // Release the claim so it can be retried from the dashboard.
-    await prisma.campaign.update({ where: { id: campaignId }, data: { summary_call_sent: false } });
-    await logError(null, 'SUMMARY_CALL', err);
-    throw err;
-  }
+  const { requestOwnerCall } = require('./ownerCalls');
+  const call = await requestOwnerCall('SUMMARY', { campaignId, data: variables });
+  await logAction(null, 'SUMMARY_CALL', `Campaign "${campaign.name}" complete — ${JSON.stringify(variables)}`);
+  return { ownerCallId: call.id, variables, mock: call.status === 'DONE' };
 }
 
 module.exports = { startCampaign, triggerSummaryCall, placeOutboundCall };

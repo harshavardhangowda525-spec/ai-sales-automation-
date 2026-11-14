@@ -21,10 +21,21 @@ const config = {
     agentPhoneNumber: env('SARVAM_AGENT_PHONE_NUMBER'),
     salesAgentId: env('SARVAM_SALES_AGENT_ID'),
     salesAgentVersion: Number(env('SARVAM_SALES_AGENT_VERSION', 1)),
-    summaryAgentId: env('SARVAM_SUMMARY_AGENT_ID'),
-    summaryAgentVersion: Number(env('SARVAM_SUMMARY_AGENT_VERSION', 1)),
+    // One "assistant" agent calls Harshavardhan for summaries and approvals.
+    // SARVAM_ASSISTANT_AGENT_ID is preferred; SARVAM_SUMMARY_AGENT_ID is accepted for compatibility.
+    summaryAgentId: env('SARVAM_ASSISTANT_AGENT_ID', env('SARVAM_SUMMARY_AGENT_ID')),
+    summaryAgentVersion: Number(env('SARVAM_ASSISTANT_AGENT_VERSION', env('SARVAM_SUMMARY_AGENT_VERSION', 1))),
   },
   ownerPhone: env('HARSHAVARDHAN_PHONE'),
+  ownerCalls: {
+    // Ask Harshavardhan on a call before a quotation goes to the client (default on)
+    requireQuotationApproval: env('REQUIRE_QUOTATION_APPROVAL', 'true') !== 'false',
+    callStartHour: Number(env('OWNER_CALL_START_HOUR', 9)), // IST
+    callEndHour: Number(env('OWNER_CALL_END_HOUR', 21)),    // IST, exclusive
+    maxAttempts: Number(env('OWNER_CALL_MAX_ATTEMPTS', 2)),
+    retryMinutes: Number(env('OWNER_CALL_RETRY_MINUTES', 15)),
+    resultTimeoutMinutes: Number(env('OWNER_CALL_TIMEOUT_MINUTES', 15)),
+  },
   ownerWhatsApp: env('HARSHAVARDHAN_WHATSAPP', env('HARSHAVARDHAN_PHONE')),
   businessEmail: env('BUSINESS_EMAIL', 'akagaminodfshanks@gmail.com'),
   businessWebsite: env('BUSINESS_WEBSITE', 'infinity-web-apps.com'),
@@ -43,6 +54,7 @@ const config = {
     phoneNumberId: env('WHATSAPP_PHONE_NUMBER_ID'),
     apiVersion: env('WHATSAPP_API_VERSION', 'v21.0'),
     templateName: env('WHATSAPP_TEMPLATE_NAME', 'infinity_proposal'),
+    websiteTemplateName: env('WHATSAPP_WEBSITE_TEMPLATE_NAME', 'infinity_website_ready'),
     templateLang: env('WHATSAPP_TEMPLATE_LANG', 'en'),
   },
 
@@ -54,6 +66,8 @@ const config = {
 
 config.isConfigured = {
   sarvam: Boolean(config.sarvam.apiKey && config.sarvam.orgId && config.sarvam.workspaceId),
+  ownerCalls: Boolean(config.sarvam.apiKey && config.sarvam.orgId && config.sarvam.workspaceId
+    && config.sarvam.summaryAgentId && config.sarvam.connectionId && config.sarvam.agentPhoneNumber && config.ownerPhone),
   google: Boolean(config.google.clientId && config.google.clientSecret && config.google.refreshToken),
   whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId),
   openai: Boolean(config.openai.apiKey),

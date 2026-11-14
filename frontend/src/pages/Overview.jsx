@@ -3,6 +3,7 @@ import StatCard from '../components/StatCard';
 import ActivityFeed from '../components/ActivityFeed';
 import OutcomeDonut from '../components/OutcomeDonut';
 import { OutcomeBadge, PlanBadge } from '../components/Badge';
+import { ApprovalRow } from '../components/Approvals';
 import usePolling from '../lib/usePolling';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
@@ -56,7 +57,7 @@ function CampaignProgress({ campaign }) {
 }
 
 export default function Overview() {
-  const { data, error, loading } = usePolling(() => api('/api/dashboard'), 6000);
+  const { data, error, loading, reload } = usePolling(() => api('/api/dashboard'), 6000);
 
   if (loading && !data) return <p className="text-sm">Loading dashboard…</p>;
   if (error && !data) return <div className="card p-6 text-sm text-red-300">Could not load dashboard: {error.message}</div>;
@@ -74,6 +75,16 @@ export default function Overview() {
         <StatCard label="Proposals Sent" value={data.proposals_sent} icon="file" color="purple" hint="via WhatsApp" />
         <StatCard label="Rejected" value={data.total_rejected} icon="x" color="red" hint={`${data.total_no_answer} no answer · ${data.total_callback} callback`} />
       </div>
+
+      {data.pending_approvals?.length > 0 && (
+        <div className="card border-amber-500/40 p-5">
+          <h2 className="text-base">Waiting for your approval <span className="ml-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">{data.pending_approvals.length}</span></h2>
+          <p className="mb-4 text-xs">Your assistant calls you about each one. You can also decide right here.</p>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {data.pending_approvals.map((c) => <ApprovalRow key={c.id} call={c} onChanged={reload} showClient />)}
+          </div>
+        </div>
+      )}
 
       <CampaignProgress campaign={data.active_campaign} />
 

@@ -86,16 +86,46 @@ The endpoint accepts **both** payload formats:
 
 **Repeat deliveries are safe.** The same `call_id`, or a retry to the same number in the same campaign, updates the existing client instead of creating a duplicate. A client who has already booked is never downgraded, and a proposal is never sent twice automatically.
 
-### Summary call agent (Sarvam)
+### Assistant agent: calls to Harsha (Sarvam)
 
-Create a second agent in Sarvam with these variables: `booked_count`, `booked_names`, `callback_count`, `rejected_count`, `no_answer_count`, `meets_scheduled`. Use this script:
+One Sarvam agent makes every call to you. The backend passes `call_type` so the agent knows which script to use:
 
-> Hey Harsha! Your Infinity outreach campaign is wrapped up bro. Here's your full report:
-> {{booked_count}} clients booked — {{booked_names}}. {{meets_scheduled}} Google Meets are on your calendar — go check!
-> {{callback_count}} clients want a callback later. {{rejected_count}} rejected and {{no_answer_count}} didn't pick up.
-> Proposals are sent on WhatsApp and in your client portal. Go close those deals! You've got this. Talk soon!
+| `call_type` | When | What happens after the call |
+|---|---|---|
+| `summary` | Every call in a campaign is done | Nothing to decide. The report is also on the dashboard |
+| `quotation` | A booked client's proposal is generated | You say **yes**: the proposal and Meet link go to the client on WhatsApp. **No**: nothing is sent |
+| `website` | You click **Website ready** on a client's page | **Yes**: the client gets the live link on WhatsApp. **No**: nothing is sent |
 
-Put its id in `SARVAM_SUMMARY_AGENT_ID`. A campaign counts as **complete** when the number of processed calls reaches its `total_calls`. That is the number of leads uploaded through the dashboard, or the "expected calls" you enter. You can also click **Complete & call me** on the Campaigns page at any time. The summary call is placed only once per campaign.
+Calls are placed **one at a time**, only between 9 AM and 9 PM IST (`OWNER_CALL_START_HOUR` / `OWNER_CALL_END_HOUR`). Missed calls are retried once after 15 minutes. If you still miss it, or don't give a clear yes or no, the item waits under **Waiting for your approval** on the dashboard, with **Approve & send**, **Reject** and **Call me again** buttons. **Resend proposal** in the dashboard is your own action, so it sends straight away without a call.
+
+**Setup in Sarvam:**
+
+1. Create an agent named "Infinity Assistant".
+2. In its Instructions, create these input variables with `@`: `call_type`, `business_name`, `contact_name`, `plan_name`, `plan_price`, `meeting_time`, `requirements`, `website_url`, `booked_count`, `booked_names`, `callback_count`, `rejected_count`, `no_answer_count`, `meets_scheduled`.
+3. On the **Variables** tab, add **output variables**:
+   * `decision`: Enum with `approved`, `rejected`, `unclear`. Extraction prompt: "Did Harsha approve sending it to the client?"
+   * `note`: String. Extraction prompt: "Any instruction Harsha gave, e.g. change the price".
+4. Commit the agent and copy its ID into `SARVAM_ASSISTANT_AGENT_ID` (and the version into `SARVAM_ASSISTANT_AGENT_VERSION`).
+5. Set `HARSHAVARDHAN_PHONE` to the number that should receive these calls.
+
+Set `REQUIRE_QUOTATION_APPROVAL=false` if you ever want quotations sent automatically without a call.
+
+### Second WhatsApp template: website ready
+
+Create a second template in WhatsApp Manager. Category Utility, name `infinity_website_ready`, language English, no header. Body:
+
+```
+Hey {{1}}! 🎉
+
+Great news — your website for *{{2}}* is live:
+🌐 {{3}}
+
+Take a look and tell us what you think. If you'd like any changes, just reply here and we'll take care of it.
+
+*Infinity Web & Apps* — Building Bengaluru's Digital Future
+```
+
+Sample values: `Ramesh`, `Sri Lakshmi Sweets`, `https://srilakshmisweets.in`.
 
 ---
 
@@ -193,6 +223,10 @@ All `/api/*` routes need `Authorization: Bearer <ADMIN_TOKEN>` when `ADMIN_TOKEN
 | POST | `/api/campaign/start` | `{ campaign_name, agent_id?, cohort_id?, contacts?: [{phone_number, business_name}], total_calls? }` |
 | PATCH | `/api/campaign/:id` | Set `total_calls` / `name` |
 | POST | `/api/campaign/:id/complete` | Mark complete now + place summary call |
+| POST | `/api/clients/:id/website-ready` | `{ website_url }`: queues a confirmation call to Harsha |
+| GET | `/api/approvals` | Open approvals (`?status=all` for history) |
+| POST | `/api/approvals/:id/approve` · `/reject` · `/call-again` | Decide from the dashboard |
+| POST | `/webhook/sarvam/owner` | Result of calls to Harsha (`?secret=`) |
 | GET | `/proposals/:id.pdf` | Public proposal PDF (`?download=1` to download) |
 | GET | `/health` | DB + integration status |
 

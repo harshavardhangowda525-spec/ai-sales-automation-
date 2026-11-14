@@ -27,6 +27,12 @@ router.get('/', async (req, res, next) => {
       prisma.client.count(),
     ]);
 
+    const pendingApprovals = await prisma.ownerCall.findMany({
+      where: { type: { not: 'SUMMARY' }, status: { in: ['QUEUED', 'CALLING', 'NEEDS_MANUAL', 'FAILED'] } },
+      orderBy: { created_at: 'desc' },
+      take: 20,
+      include: { client: { select: { id: true, business_name: true, plan_interest: true } } },
+    });
     const count = (o) => outcomes.find((g) => g.call_outcome === o)?._count._all || 0;
     const booked = count('BOOKED');
     const converted = await prisma.client.count({ where: { portal_status: 'CONVERTED' } });
@@ -45,6 +51,7 @@ router.get('/', async (req, res, next) => {
       conversion_rate: total ? Math.round((booked / total) * 1000) / 10 : 0,
       recent_clients: recentClients,
       recent_activity: activity,
+      pending_approvals: pendingApprovals,
     });
   } catch (err) {
     next(err);

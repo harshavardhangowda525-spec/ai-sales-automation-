@@ -7,6 +7,8 @@ const { scheduleGoogleMeet } = require('./googleCalendar');
 const { generateProposal } = require('./proposalGenerator');
 const { sendWhatsAppMessage } = require('./whatsapp');
 const { triggerSummaryCall } = require('./sarvam');
+const { requestOwnerCall } = require('./ownerCalls');
+const config = require('../lib/config');
 
 const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -145,8 +147,11 @@ async function recordCall(body) {
 }
 
 /** Run the booked-client automations: Meet → proposal → WhatsApp. Each step is isolated. */
-async function runBookedAutomation(client, prefs = {}) {
-  const result = { meet: null, proposal: null, whatsapp: null, errors: [] };
+/**
+ * @param {object} [opts] { skipApproval } — true when Harsha triggered it himself from the dashboard
+ */
+async function runBookedAutomation(client, prefs = {}, { skipApproval = false } = {}) {
+  const result = { meet: null, proposal: null, whatsapp: null, approval: null, errors: [] };
 
   if (!client.meeting_link) {
     try {
@@ -166,7 +171,16 @@ async function runBookedAutomation(client, prefs = {}) {
   }
 
   fresh = await prisma.client.findUnique({ where: { id: client.id } });
-  if (fresh.proposal_url) {
+  if (fresh.proposal_url && config.ownerCalls.requireQuotationApproval && !skipApproval) {
+    // Ask Harsha on a call first; the WhatsApp goes out when he says yes (see ownerCalls.js).
+    try {
+      const call = await requestOwnerCall('QUOTATION', { clientId: client.id, campaignId: client.campaign_id });
+      result.approval = { ownerCallId: call.id, status: call.status };
+    } catch (err) {
+      result.errors.push('approval');
+      await logError(client.id, 'APPROVAL_REQUEST', err);
+    }
+  } else if (fresh.proposal_url) {
     try {
       result.whatsapp = await sendWhatsAppMessage(fresh, fresh.proposal_url, fresh.meeting_link, fresh.meeting_time,
         { proposalNumber: result.proposal?.number });

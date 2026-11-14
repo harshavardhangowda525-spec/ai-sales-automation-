@@ -5,6 +5,7 @@ const { runBookedAutomation } = require('../services/pipeline');
 const { scheduleGoogleMeet } = require('../services/googleCalendar');
 const { generateProposal } = require('../services/proposalGenerator');
 const { sendWhatsAppMessage } = require('../services/whatsapp');
+const { requestOwnerCall } = require('../services/ownerCalls');
 
 const router = express.Router();
 const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER'];
@@ -57,6 +58,7 @@ router.get('/:id', async (req, res, next) => {
         campaign: true,
         call_logs: { orderBy: { timestamp: 'desc' } },
         proposals: { orderBy: { created_at: 'desc' }, select: { id: true, number: true, plan: true, created_at: true } },
+        owner_calls: { orderBy: { created_at: 'desc' } },
       },
     });
     if (!client) return res.status(404).json({ error: 'Client not found' });
@@ -99,7 +101,7 @@ router.post('/:id/resend-proposal', async (req, res, next) => {
     const client = await prisma.client.findUnique({ where: { id: req.params.id } });
     if (!client) return res.status(404).json({ error: 'Client not found' });
     await logAction(client.id, 'PROPOSAL_RESEND_REQUESTED', 'Triggered from dashboard');
-    const result = await runBookedAutomation(client);
+    const result = await runBookedAutomation(client, {}, { skipApproval: true });
     const updated = await prisma.client.findUnique({ where: { id: client.id } });
     res.status(result.errors.length ? 207 : 200).json({ ok: result.errors.length === 0, result, client: updated });
   } catch (err) {
@@ -141,6 +143,28 @@ router.post('/:id/reschedule', async (req, res, next) => {
     res.json({ ok: true, meet, whatsapp, client: updated });
   } catch (err) {
     await logError(req.params.id, 'RESCHEDULE', err);
+    next(err);
+  }
+});
+
+// POST /api/clients/:id/website-ready  body: { website_url }
+// Saves the link and queues a call asking Harsha to confirm before the client gets it on WhatsApp.
+router.post('/:id/website-ready', async (req, res, next) => {
+  try {
+    const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    let url;
+    try {
+      url = new URL(String(req.body?.website_url || '').trim()).toString();
+    } catch {
+      return res.status(400).json({ error: 'Enter a full website link, e.g. https://example.com' });
+    }
+    if (!/^https?:/.test(url)) return res.status(400).json({ error: 'Website link must start with http:// or https://' });
+    await prisma.client.update({ where: { id: client.id }, data: { website_url: url, website_sent: false } });
+    await logAction(client.id, 'WEBSITE_READY', `Website marked ready: ${url}`);
+    const call = await requestOwnerCall('WEBSITE', { clientId: client.id, campaignId: client.campaign_id, data: { website_url: url } });
+    res.json({ ok: true, owner_call: call });
+  } catch (err) {
     next(err);
   }
 });

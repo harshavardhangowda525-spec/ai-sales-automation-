@@ -103,4 +103,53 @@ async function sendWhatsAppMessage(client, proposalUrl, meetLink, meetTime, { pr
   return { mock: false, messageId };
 }
 
-module.exports = { sendWhatsAppMessage, buildMessageText };
+function buildWebsiteText({ name, businessName, websiteUrl }) {
+  return `Hey ${name}! 🎉
+
+Great news — your website for *${businessName}* is live:
+🌐 ${websiteUrl}
+
+Take a look and tell us what you think. If you'd like any changes, just reply here and we'll take care of it.
+
+*Infinity Web & Apps* — Building Bengaluru's Digital Future`;
+}
+
+/**
+ * Send the live website link to the client (after Harshavardhan approves on the call).
+ * Template WHATSAPP_WEBSITE_TEMPLATE_NAME, body params: {{1}} name, {{2}} business, {{3}} website URL.
+ */
+async function sendWebsiteReadyMessage(client, websiteUrl) {
+  const vars = {
+    name: client.contact_name?.split(' ')[0] || 'there',
+    businessName: client.business_name,
+    websiteUrl,
+  };
+  const to = toWhatsAppId(client.phone_number);
+
+  if (!config.isConfigured.whatsapp) {
+    await logAction(client.id, 'WEBSITE_LINK_SENT_MOCK',
+      `WhatsApp not configured — message that would be sent to +${to}:\n\n${buildWebsiteText(vars)}`);
+    return { mock: true, messageId: null };
+  }
+
+  const { websiteTemplateName, templateLang } = config.whatsapp;
+  const body = websiteTemplateName && websiteTemplateName !== 'none'
+    ? {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: websiteTemplateName,
+        language: { code: templateLang },
+        components: [{ type: 'body', parameters: [vars.name, vars.businessName, vars.websiteUrl].map(param) }],
+      },
+    }
+    : { messaging_product: 'whatsapp', to, type: 'text', text: { preview_url: true, body: buildWebsiteText(vars) } };
+
+  const json = await callGraph(body);
+  const messageId = json.messages?.[0]?.id || null;
+  await logAction(client.id, 'WEBSITE_LINK_SENT', `Sent website link ${websiteUrl} to +${to} (message id ${messageId})`);
+  return { mock: false, messageId };
+}
+
+module.exports = { sendWhatsAppMessage, sendWebsiteReadyMessage, buildMessageText, buildWebsiteText };

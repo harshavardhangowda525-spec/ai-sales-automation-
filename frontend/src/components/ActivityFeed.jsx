@@ -16,6 +16,19 @@ function describe(action) {
     CLIENT_UPDATED: ['Client updated', 'bg-gray-400'],
     NOTES_UPDATED: ['Notes updated', 'bg-gray-400'],
     PROPOSAL_RESEND_REQUESTED: ['Proposal resend requested', 'bg-violet-400'],
+    WEBSITE_READY: ['Website marked ready', 'bg-cyan-400'],
+    WEBSITE_LINK_SENT: ['Website link sent on WhatsApp', 'bg-emerald-400'],
+    OWNER_CALL_QUOTATION_QUEUED: ['Approval call queued · quotation', 'bg-amber-400'],
+    OWNER_CALL_WEBSITE_QUEUED: ['Approval call queued · website', 'bg-amber-400'],
+    OWNER_CALL_QUOTATION_PLACED: ['Calling you · quotation', 'bg-amber-400'],
+    OWNER_CALL_WEBSITE_PLACED: ['Calling you · website', 'bg-amber-400'],
+    OWNER_APPROVED_QUOTATION: ['You approved the quotation', 'bg-emerald-400'],
+    OWNER_APPROVED_WEBSITE: ['You approved the website link', 'bg-emerald-400'],
+    OWNER_REJECTED_QUOTATION: ['You rejected the quotation', 'bg-red-400'],
+    OWNER_REJECTED_WEBSITE: ['You rejected the website link', 'bg-red-400'],
+    SUMMARY_CALL_DELIVERED: ['Summary call delivered', 'bg-emerald-400'],
+    OWNER_CALL_SUMMARY_QUEUED: ['Summary call queued', 'bg-emerald-400'],
+    OWNER_CALL_SUMMARY_PLACED: ['Calling you · campaign summary', 'bg-emerald-400'],
   };
   if (a.endsWith('_ERROR')) return [`Error · ${a.replace(/_ERROR$/, '').replace(/_/g, ' ').toLowerCase()}`, 'bg-red-500'];
   return map[a] || [a.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()), 'bg-gray-400'];

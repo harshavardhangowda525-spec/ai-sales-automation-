@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { OutcomeBadge, PlanBadge, PortalBadge } from '../components/Badge';
 import Icon from '../components/Icon';
 import RescheduleModal from '../components/RescheduleModal';
+import WebsiteReadyModal from '../components/WebsiteReadyModal';
+import { ApprovalRow } from '../components/Approvals';
 import { useToast } from '../components/Toast';
 import usePolling from '../lib/usePolling';
 import { api } from '../lib/api';
@@ -26,6 +28,7 @@ export default function ClientDetail() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [busy, setBusy] = useState('');
   const [rescheduling, setRescheduling] = useState(false);
+  const [websiteOpen, setWebsiteOpen] = useState(false);
 
   useEffect(() => { if (c && !notesDirty) setNotes(c.notes || ''); }, [c, notesDirty]);
 
@@ -77,6 +80,7 @@ export default function ClientDetail() {
         <div className="flex flex-wrap gap-2">
           <a href={`https://wa.me/${c.phone_number.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="btn-ghost">WhatsApp</a>
           <button className="btn-ghost" onClick={() => setRescheduling(true)}><Icon name="calendar" /> Reschedule</button>
+          <button className="btn-ghost" onClick={() => setWebsiteOpen(true)}><Icon name="external" /> Website ready</button>
           <button className="btn-primary" disabled={busy === 'resend'} onClick={resend}><Icon name="send" /> {busy === 'resend' ? 'Sending…' : 'Resend proposal'}</button>
         </div>
       </div>
@@ -136,6 +140,22 @@ export default function ClientDetail() {
         </div>
 
         <div className="space-y-6">
+          {c.owner_calls?.length > 0 && (
+            <div className="card p-5">
+              <h2 className="mb-1 text-base">Your approvals</h2>
+              <p className="mb-4 text-xs">Your assistant calls you before anything is sent to this client.</p>
+              <div className="space-y-3">
+                {c.owner_calls.map((oc) => <ApprovalRow key={oc.id} call={oc} onChanged={reload} />)}
+              </div>
+            </div>
+          )}
+          {c.website_url && (
+            <div className="card p-5">
+              <h2 className="mb-2 text-base">Website</h2>
+              <a href={c.website_url} target="_blank" rel="noreferrer" className="break-all text-sm text-blue-400 hover:underline">{c.website_url}</a>
+              <p className="mt-2 text-xs">{c.website_sent ? '✓ Link sent to client on WhatsApp' : 'Waiting for your approval'}</p>
+            </div>
+          )}
           <div className="card p-5">
             <h2 className="mb-4 flex items-center gap-2 text-base"><Icon name="video" className="h-4 w-4 text-blue-400" /> Consultation</h2>
             <p className="text-lg font-semibold text-ink">{fmtMeeting(c.meeting_time)}</p>
@@ -158,7 +178,7 @@ export default function ClientDetail() {
                   <a href={c.proposal_url} target="_blank" rel="noreferrer" className="btn-ghost btn-sm">Open</a>
                   <a href={`${c.proposal_url}?download=1`} className="btn-ghost btn-sm">Download</a>
                 </div>
-                <p className="mt-3 text-xs">{c.proposal_sent ? '✓ Sent on WhatsApp' : 'Not sent yet'}</p>
+                <p className="mt-3 text-xs">{c.proposal_sent ? '✓ Sent on WhatsApp' : 'Not sent yet — waiting for your approval'}</p>
                 {c.proposals?.length > 1 && <p className="mt-1 text-xs text-gray-500">{c.proposals.length} versions · latest {c.proposals[0].number}</p>}
               </>
             ) : <p className="text-sm text-gray-500">No proposal generated yet.</p>}
@@ -188,6 +208,7 @@ export default function ClientDetail() {
       </div>
 
       {rescheduling && <RescheduleModal client={c} onClose={() => setRescheduling(false)} onDone={reload} />}
+      {websiteOpen && <WebsiteReadyModal client={c} onClose={() => setWebsiteOpen(false)} onDone={reload} />}
     </div>
   );
 }
