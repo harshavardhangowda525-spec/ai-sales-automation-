@@ -27,6 +27,10 @@ function describe(action) {
     OWNER_REJECTED_QUOTATION: ['You rejected the quotation', 'bg-red-400'],
     OWNER_REJECTED_WEBSITE: ['You rejected the website link', 'bg-red-400'],
     SUMMARY_CALL_DELIVERED: ['Summary call delivered', 'bg-emerald-400'],
+    WEBSITE_PROMPT_READY: ['Website build prompt written', 'bg-violet-400'],
+    OWNER_CALL_UPDATE_QUEUED: ['Jarvis update call requested', 'bg-blue-400'],
+    OWNER_CALL_UPDATE_PLACED: ['Jarvis is calling you', 'bg-blue-400'],
+    UPDATE_CALL_DELIVERED: ['Jarvis update delivered', 'bg-emerald-400'],
     OWNER_CALL_SUMMARY_QUEUED: ['Summary call queued', 'bg-emerald-400'],
     OWNER_CALL_SUMMARY_PLACED: ['Calling you · campaign summary', 'bg-emerald-400'],
   };

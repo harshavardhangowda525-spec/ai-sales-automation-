@@ -23,3 +23,16 @@ export async function api(path, { method = 'GET', body } = {}) {
 }
 
 export const API_BASE = BASE;
+
+/** Download an authenticated file (e.g. the website prompt .md). */
+export async function downloadFile(path, filename) {
+  const res = await fetch(`${BASE}${path}`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {} });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

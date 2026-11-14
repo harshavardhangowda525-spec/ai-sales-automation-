@@ -110,6 +110,16 @@ Calls are placed **one at a time**, only between 9 AM and 9 PM IST (`OWNER_CALL_
 
 Set `REQUIRE_QUOTATION_APPROVAL=false` if you ever want quotations sent automatically without a call.
 
+### Jarvis status call ("call me now")
+
+The **Jarvis, call me now** button on the Overview page calls you straight away, even outside calling hours. Jarvis reports on the latest campaign (calls made, who booked, callbacks, rejected, no answer, Meets scheduled), where every website build stands, and how many approvals are waiting. The agent gets `call_type` = `update` plus `campaign_name`, `total_calls`, `websites_summary` and `pending_approvals`, along with the summary variables. A preview of what Jarvis will say is shown before it calls.
+
+### Website builds with Claude Code
+
+Every booked client gets a **Claude Code build prompt**. Groq writes it (`GROQ_API_KEY`, model `GROQ_MODEL`) from the client's requirements, plan scope and business details. Without a key, a built-in template is used. On the client's page you can view, copy or download it as a `.md` file, or rewrite it. To build, open Claude Code in an empty folder on your computer and paste the prompt, or save it as `CLAUDE.md` and ask Claude to build the site it describes.
+
+Progress is tracked in stages on the client page: **Prompt ready → In development → In review → Ready → Delivered**. You can also save a preview link. Clicking **Ready** asks for the live link and queues the website-ready approval call. Once you approve, the client gets the link on WhatsApp and the stage becomes **Delivered**.
+
 ### Second WhatsApp template: website ready
 
 Create a second template in WhatsApp Manager. Category Utility, name `infinity_website_ready`, language English, no header. Body:
@@ -227,6 +237,9 @@ All `/api/*` routes need `Authorization: Bearer <ADMIN_TOKEN>` when `ADMIN_TOKEN
 | GET | `/api/approvals` | Open approvals (`?status=all` for history) |
 | POST | `/api/approvals/:id/approve` · `/reject` · `/call-again` | Decide from the dashboard |
 | POST | `/webhook/sarvam/owner` | Result of calls to Harsha (`?secret=`) |
+| POST | `/api/approvals/update-call` | "Jarvis, call me now": status call immediately (`GET /api/approvals/update-preview` shows what it will say) |
+| POST | `/api/clients/:id/website-prompt` | (Re)write the Claude Code build prompt (Groq or template) |
+| GET | `/api/clients/:id/website-prompt.md` | Download the build prompt |
 | GET | `/proposals/:id.pdf` | Public proposal PDF (`?download=1` to download) |
 | GET | `/health` | DB + integration status |
 

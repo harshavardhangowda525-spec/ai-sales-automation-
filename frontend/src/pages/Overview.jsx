@@ -4,6 +4,77 @@ import ActivityFeed from '../components/ActivityFeed';
 import OutcomeDonut from '../components/OutcomeDonut';
 import { OutcomeBadge, PlanBadge } from '../components/Badge';
 import { ApprovalRow } from '../components/Approvals';
+import Icon from '../components/Icon';
+import { useToast } from '../components/Toast';
+import { STAGES } from '../components/WebsiteBuild';
+import { useState } from 'react';
+
+function JarvisCall() {
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  async function show() {
+    setOpen(true);
+    try { setPreview(await api('/api/approvals/update-preview')); } catch (err) { toast(err.message, 'error'); }
+  }
+  async function call() {
+    setBusy(true);
+    try {
+      await api('/api/approvals/update-call', { method: 'POST' });
+      toast('Jarvis is calling you now', 'success');
+      setOpen(false);
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+  }
+  return (
+    <>
+      <button className="btn-primary" onClick={show}><Icon name="phone" /> Jarvis, call me now</button>
+      {open && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-4" onClick={() => setOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-lg p-6">
+            <h3 className="text-lg">Jarvis status call</h3>
+            <p className="mt-1 text-sm">Jarvis will call your phone right away and tell you:</p>
+            {preview ? (
+              <ul className="mt-4 space-y-2 rounded-lg bg-navy p-4 text-sm text-gray-300">
+                <li><b className="text-ink">Calls ({preview.campaign_name}):</b> {preview.total_calls} made · {preview.booked_count} booked{preview.booked_count ? ` (${preview.booked_names})` : ''} · {preview.callback_count} callback · {preview.rejected_count} rejected · {preview.no_answer_count} no answer</li>
+                <li><b className="text-ink">Meets scheduled:</b> {preview.meets_scheduled}</li>
+                <li><b className="text-ink">Websites:</b> {preview.websites_summary}</li>
+                <li><b className="text-ink">Waiting for your approval:</b> {preview.pending_approvals}</li>
+              </ul>
+            ) : <p className="mt-4 text-sm">Loading…</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="btn-primary" disabled={busy || !preview} onClick={call}>{busy ? 'Calling…' : 'Call me now'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function WebsitePipeline({ counts }) {
+  const total = Object.values(counts || {}).reduce((a, b) => a + b, 0);
+  return (
+    <div className="card p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-base">Website builds</h2>
+        <Link to="/clients?outcome=BOOKED" className="text-sm text-blue-400 hover:underline">Booked clients →</Link>
+      </div>
+      {total === 0 ? <p className="py-3 text-sm text-gray-500">No websites in progress yet. A build prompt is written for every booked client.</p> : (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+          {STAGES.filter(([k]) => k !== 'NOT_STARTED').map(([k, label]) => (
+            <div key={k} className="rounded-lg bg-navy px-3 py-2.5 text-center">
+              <p className="text-xl font-bold tabular-nums text-ink">{counts[k] || 0}</p>
+              <p className="text-[11px]">{label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 import usePolling from '../lib/usePolling';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
@@ -64,9 +135,12 @@ export default function Overview() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl">Overview</h1>
-        <p className="text-sm">Live results from your Sarvam AI outreach.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl">Overview</h1>
+          <p className="text-sm">Live results from your Sarvam AI outreach.</p>
+        </div>
+        <JarvisCall />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -87,6 +161,8 @@ export default function Overview() {
       )}
 
       <CampaignProgress campaign={data.active_campaign} />
+
+      <WebsitePipeline counts={data.website_stages} />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         <div className="card p-5 xl:col-span-2">

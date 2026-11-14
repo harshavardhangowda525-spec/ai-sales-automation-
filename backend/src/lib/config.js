@@ -58,6 +58,12 @@ const config = {
     templateLang: env('WHATSAPP_TEMPLATE_LANG', 'en'),
   },
 
+  // Groq writes the Claude Code website build prompts
+  groq: {
+    apiKey: env('GROQ_API_KEY'),
+    model: env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+  },
+
   openai: {
     apiKey: env('OPENAI_API_KEY'),
     model: env('OPENAI_MODEL', 'gpt-4o'),
@@ -71,6 +77,7 @@ config.isConfigured = {
   google: Boolean(config.google.clientId && config.google.clientSecret && config.google.refreshToken),
   whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId),
   openai: Boolean(config.openai.apiKey),
+  groq: Boolean(config.groq.apiKey),
 };
 
 module.exports = config;

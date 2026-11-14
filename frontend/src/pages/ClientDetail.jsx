@@ -5,6 +5,7 @@ import Icon from '../components/Icon';
 import RescheduleModal from '../components/RescheduleModal';
 import WebsiteReadyModal from '../components/WebsiteReadyModal';
 import { ApprovalRow } from '../components/Approvals';
+import WebsiteBuild from '../components/WebsiteBuild';
 import { useToast } from '../components/Toast';
 import usePolling from '../lib/usePolling';
 import { api } from '../lib/api';
@@ -111,6 +112,10 @@ export default function ClientDetail() {
               <p className="mt-1 whitespace-pre-line text-sm text-ink">{c.requirements || <span className="text-gray-500">Not captured</span>}</p>
             </div>
           </div>
+
+          {(c.call_outcome === 'BOOKED' || c.website_stage !== 'NOT_STARTED' || c.website_prompt) && (
+            <WebsiteBuild client={c} onChanged={reload} onReady={() => setWebsiteOpen(true)} />
+          )}
 
           <div className="card p-5">
             <button className="flex w-full items-center justify-between" onClick={() => setShowTranscript((s) => !s)} aria-expanded={showTranscript}>

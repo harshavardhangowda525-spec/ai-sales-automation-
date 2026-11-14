@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
-const { decide, retryOwnerCall } = require('../services/ownerCalls');
+const { decide, retryOwnerCall, requestUpdateCall, buildUpdateData } = require('../services/ownerCalls');
 
 const router = express.Router();
 
@@ -15,6 +15,25 @@ router.get('/', async (req, res, next) => {
       include: { client: { select: { id: true, business_name: true, contact_name: true, plan_interest: true } } },
     });
     res.json(calls);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/approvals/update-call — "Jarvis, call me now" with calls + website progress
+router.post('/update-call', async (req, res, next) => {
+  try {
+    const { call, data } = await requestUpdateCall();
+    res.json({ ok: true, owner_call: call, script_data: data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/approvals/update-preview — what the update call would say right now
+router.get('/update-preview', async (req, res, next) => {
+  try {
+    res.json(await buildUpdateData());
   } catch (err) {
     next(err);
   }

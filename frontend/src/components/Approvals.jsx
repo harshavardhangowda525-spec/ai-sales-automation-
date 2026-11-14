@@ -5,7 +5,7 @@ import { useToast } from './Toast';
 import { api } from '../lib/api';
 import { fmtDateTime } from '../lib/format';
 
-const TYPE_LABEL = { QUOTATION: 'Quotation', WEBSITE: 'Website link', SUMMARY: 'Campaign summary' };
+const TYPE_LABEL = { QUOTATION: 'Quotation', WEBSITE: 'Website link', SUMMARY: 'Campaign summary', UPDATE: 'Status update call' };
 const STATUS = {
   QUEUED: ['Waiting to call you', 'blue'],
   CALLING: ['Calling you now', 'blue'],
@@ -58,7 +58,7 @@ export function ApprovalRow({ call, onChanged, showClient = false }) {
         </div>
         <ApprovalStatus status={call.status} />
       </div>
-      {open && call.type !== 'SUMMARY' && (
+      {open && !['SUMMARY', 'UPDATE'].includes(call.type) && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button className="btn-primary btn-sm" disabled={!!busy} onClick={() => act('approve', 'Approved — sent to the client on WhatsApp')}>
             {busy === 'approve' ? 'Sending…' : call.status === 'FAILED' ? 'Retry sending' : 'Approve & send'}

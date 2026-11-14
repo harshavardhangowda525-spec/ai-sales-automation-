@@ -6,6 +6,8 @@ const { scheduleGoogleMeet } = require('../services/googleCalendar');
 const { generateProposal } = require('../services/proposalGenerator');
 const { sendWhatsAppMessage } = require('../services/whatsapp');
 const { requestOwnerCall } = require('../services/ownerCalls');
+const { generateWebsitePrompt } = require('../services/websitePrompt');
+const STAGES = ['NOT_STARTED', 'PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW', 'READY', 'DELIVERED'];
 
 const router = express.Router();
 const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER'];
@@ -71,8 +73,16 @@ router.get('/:id', async (req, res, next) => {
 // PATCH /api/clients/:id — update notes / portal status / plan / contact name
 router.patch('/:id', async (req, res, next) => {
   try {
-    const { notes, portal_status, plan_interest, contact_name } = req.body;
+    const { notes, portal_status, plan_interest, contact_name, website_stage, website_preview_url } = req.body;
     const data = {};
+    if (website_stage !== undefined) {
+      if (!STAGES.includes(website_stage)) return res.status(400).json({ error: 'invalid website_stage' });
+      data.website_stage = website_stage;
+    }
+    if (website_preview_url !== undefined) {
+      if (website_preview_url && !/^https?:\/\//.test(website_preview_url)) return res.status(400).json({ error: 'Preview link must start with http:// or https://' });
+      data.website_preview_url = website_preview_url || null;
+    }
     if (notes !== undefined) data.notes = notes;
     if (portal_status !== undefined) {
       if (!PORTAL.includes(portal_status)) return res.status(400).json({ error: 'invalid portal_status' });
@@ -147,6 +157,31 @@ router.post('/:id/reschedule', async (req, res, next) => {
   }
 });
 
+// POST /api/clients/:id/website-prompt — (re)write the Claude Code build prompt
+router.post('/:id/website-prompt', async (req, res, next) => {
+  try {
+    const exists = await prisma.client.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!exists) return res.status(404).json({ error: 'Client not found' });
+    const client = await generateWebsitePrompt(req.params.id);
+    res.json({ ok: true, client });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/clients/:id/website-prompt.md — download the prompt (paste into Claude Code / save as CLAUDE.md)
+router.get('/:id/website-prompt.md', async (req, res, next) => {
+  try {
+    const c = await prisma.client.findUnique({ where: { id: req.params.id }, select: { business_name: true, website_prompt: true } });
+    if (!c?.website_prompt) return res.status(404).json({ error: 'No build prompt yet' });
+    const name = c.business_name.replace(/[^\w-]+/g, '-').replace(/-+/g, '-').toLowerCase();
+    res.set({ 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${name}-website-prompt.md"` });
+    res.send(c.website_prompt);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/clients/:id/website-ready  body: { website_url }
 // Saves the link and queues a call asking Harsha to confirm before the client gets it on WhatsApp.
 router.post('/:id/website-ready', async (req, res, next) => {
@@ -160,7 +195,7 @@ router.post('/:id/website-ready', async (req, res, next) => {
       return res.status(400).json({ error: 'Enter a full website link, e.g. https://example.com' });
     }
     if (!/^https?:/.test(url)) return res.status(400).json({ error: 'Website link must start with http:// or https://' });
-    await prisma.client.update({ where: { id: client.id }, data: { website_url: url, website_sent: false } });
+    await prisma.client.update({ where: { id: client.id }, data: { website_url: url, website_sent: false, website_stage: 'READY' } });
     await logAction(client.id, 'WEBSITE_READY', `Website marked ready: ${url}`);
     const call = await requestOwnerCall('WEBSITE', { clientId: client.id, campaignId: client.campaign_id, data: { website_url: url } });
     res.json({ ok: true, owner_call: call });

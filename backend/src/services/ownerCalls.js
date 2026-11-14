@@ -30,8 +30,9 @@ function buildVariables(call, client) {
     requirements: (client?.requirements || '-').replace(/\s*\n+\s*/g, '; ').slice(0, 400),
     website_url: call.data?.website_url || '-',
     booked_count: '-', booked_names: '-', callback_count: '-', rejected_count: '-', no_answer_count: '-', meets_scheduled: '-',
+    campaign_name: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-',
   };
-  if (call.type === 'SUMMARY') Object.assign(base, call.data || {});
+  if (call.type === 'SUMMARY' || call.type === 'UPDATE') Object.assign(base, call.data || {});
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
 }
 
@@ -49,7 +50,7 @@ async function requestOwnerCall(type, { clientId = null, campaignId = null, data
   const call = await prisma.ownerCall.create({ data: { type, client_id: clientId, campaign_id: campaignId, data } });
 
   if (!config.isConfigured.ownerCalls) {
-    await prisma.ownerCall.update({ where: { id: call.id }, data: { status: type === 'SUMMARY' ? 'DONE' : 'NEEDS_MANUAL', decision_note: 'Assistant agent / owner phone not configured' } });
+    await prisma.ownerCall.update({ where: { id: call.id }, data: { status: ['SUMMARY', 'UPDATE'].includes(type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: 'Assistant agent / owner phone not configured' } });
     await logAction(clientId, `OWNER_CALL_${type}_MOCK`,
       `Call to Harsha not placed (assistant agent, connection or HARSHAVARDHAN_PHONE not configured).${type === 'SUMMARY' ? ` Report: ${JSON.stringify(data)}` : ' Approve it from the dashboard.'}`);
     return call;
@@ -101,10 +102,10 @@ async function scheduleRetryOrManual(id, note) {
   } else {
     await prisma.ownerCall.update({
       where: { id },
-      data: { status: call.type === 'SUMMARY' ? 'DONE' : 'NEEDS_MANUAL', decision_note: note },
+      data: { status: ['SUMMARY', 'UPDATE'].includes(call.type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: note },
     });
     await logAction(call.client_id, `OWNER_CALL_${call.type}_UNANSWERED`,
-      call.type === 'SUMMARY' ? `${note} — summary is on the dashboard` : `${note} — approve or reject from the dashboard`);
+      ['SUMMARY', 'UPDATE'].includes(call.type) ? `${note} — summary is on the dashboard` : `${note} — approve or reject from the dashboard`);
   }
 }
 
@@ -118,14 +119,16 @@ async function processQueue() {
     const stale = await prisma.ownerCall.findMany({ where: { status: 'CALLING', called_at: { lt: timeout } } });
     for (const s of stale) await scheduleRetryOrManual(s.id, 'No call result received');
 
-    if (!config.isConfigured.ownerCalls || !inCallingHours()) return;
+    if (!config.isConfigured.ownerCalls) return;
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;
 
-    // Summaries first, then approvals in the order they were requested.
-    const next = await prisma.ownerCall.findFirst({
-      where: { status: 'QUEUED', next_attempt_at: { lte: new Date() } },
-      orderBy: [{ type: 'asc' }, { created_at: 'asc' }],
-    });
+    // "Call me now" updates go first and ignore calling hours (Harsha asked for them).
+    // Then summaries, then approvals in the order they were requested — only during calling hours.
+    const due = { status: 'QUEUED', next_attempt_at: { lte: new Date() } };
+    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: 'UPDATE' }, orderBy: { created_at: 'asc' } });
+    if (!next && inCallingHours()) {
+      next = await prisma.ownerCall.findFirst({ where: due, orderBy: [{ type: 'asc' }, { created_at: 'asc' }] });
+    }
     if (next) await placeCall(next);
   } finally {
     processing = false;
@@ -160,7 +163,7 @@ async function executeApproved(callId) {
       const url = call.data?.website_url || client.website_url;
       if (!url) throw new Error('No website URL recorded');
       await sendWebsiteReadyMessage(client, url);
-      await prisma.client.update({ where: { id: client.id }, data: { website_sent: true, website_url: url } });
+      await prisma.client.update({ where: { id: client.id }, data: { website_sent: true, website_url: url, website_stage: 'DELIVERED' } });
     }
     await prisma.ownerCall.update({ where: { id: call.id }, data: { status: 'SENT' } });
     return { ok: true };
@@ -200,12 +203,13 @@ async function handleOwnerWebhook(body = {}) {
   const connectivity = String(body.status || body.connectivity_status || '').toLowerCase();
   const connected = !connectivity || ['connected', 'completed', 'success'].includes(connectivity);
 
-  if (call.type === 'SUMMARY') {
+  if (call.type === 'SUMMARY' || call.type === 'UPDATE') {
     if (connected) {
       await prisma.ownerCall.update({ where: { id: call.id }, data: { status: 'DONE', decided_at: new Date() } });
-      await logAction(null, 'SUMMARY_CALL_DELIVERED', `Harsha heard the campaign summary (${body.duration ?? '?'}s)`);
+      await logAction(null, call.type === 'UPDATE' ? 'UPDATE_CALL_DELIVERED' : 'SUMMARY_CALL_DELIVERED',
+        `Harsha heard the ${call.type === 'UPDATE' ? 'status update' : 'campaign summary'} (${body.duration ?? '?'}s)`);
     } else {
-      await scheduleRetryOrManual(call.id, `Summary call ${connectivity}`);
+      await scheduleRetryOrManual(call.id, `${call.type === 'UPDATE' ? 'Update' : 'Summary'} call ${connectivity}`);
     }
     processQueue().catch(() => {});
     return { ok: true };
@@ -237,6 +241,53 @@ async function retryOwnerCall(callId) {
   processQueue().catch(() => {});
 }
 
+const STAGE_WORDS = {
+  PROMPT_READY: 'build prompt ready', IN_DEVELOPMENT: 'in development', IN_REVIEW: 'in review', READY: 'ready to send', DELIVERED: 'delivered',
+};
+
+/** Spoken status for the "Jarvis, call me now" update: latest campaign + website progress. */
+async function buildUpdateData() {
+  const campaign = await prisma.campaign.findFirst({ orderBy: { created_at: 'desc' } });
+  const where = campaign ? { campaign_id: campaign.id } : {};
+  const groups = await prisma.client.groupBy({ by: ['call_outcome'], where, _count: { _all: true } });
+  const n = (o) => groups.find((g) => g.call_outcome === o)?._count._all || 0;
+  const booked = await prisma.client.findMany({ where: { ...where, call_outcome: 'BOOKED' }, select: { business_name: true, meeting_link: true } });
+
+  const sites = await prisma.client.findMany({
+    where: { website_stage: { not: 'NOT_STARTED' } },
+    orderBy: { updated_at: 'desc' },
+    take: 8,
+    select: { business_name: true, website_stage: true },
+  });
+  const websitesSummary = sites.length
+    ? sites.map((c) => `${c.business_name} ${STAGE_WORDS[c.website_stage]}`).join('; ')
+    : 'no websites in progress yet';
+  const pending = await prisma.ownerCall.count({ where: { type: { in: ['QUOTATION', 'WEBSITE'] }, status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } } });
+
+  return {
+    campaign_name: campaign?.name || 'no campaign yet',
+    total_calls: n('BOOKED') + n('REJECTED') + n('NO_ANSWER') + n('CALLBACK_LATER'),
+    booked_count: n('BOOKED'),
+    booked_names: booked.map((c) => c.business_name).join(', ') || 'none',
+    callback_count: n('CALLBACK_LATER'),
+    rejected_count: n('REJECTED'),
+    no_answer_count: n('NO_ANSWER'),
+    meets_scheduled: booked.filter((c) => c.meeting_link).length,
+    websites_summary: websitesSummary,
+    pending_approvals: pending,
+  };
+}
+
+/** "Jarvis, call me now" — calls Harsha immediately (outside calling hours too). */
+async function requestUpdateCall() {
+  if (!config.isConfigured.ownerCalls) {
+    throw Object.assign(new Error('Calls to you are not set up: needs the Sarvam agent, connection and HARSHAVARDHAN_PHONE'), { status: 400 });
+  }
+  const data = await buildUpdateData();
+  const call = await requestOwnerCall('UPDATE', { data });
+  return { call, data };
+}
+
 let timer = null;
 function startOwnerCallWorker() {
   if (timer) return;
@@ -246,5 +297,6 @@ function startOwnerCallWorker() {
 }
 
 module.exports = {
+  requestUpdateCall, buildUpdateData,
   requestOwnerCall, processQueue, handleOwnerWebhook, decide, retryOwnerCall, startOwnerCallWorker, parseDecision, buildVariables,
 };

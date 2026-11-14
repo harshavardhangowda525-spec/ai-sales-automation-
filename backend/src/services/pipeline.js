@@ -8,6 +8,7 @@ const { generateProposal } = require('./proposalGenerator');
 const { sendWhatsAppMessage } = require('./whatsapp');
 const { triggerSummaryCall } = require('./sarvam');
 const { requestOwnerCall } = require('./ownerCalls');
+const { generateWebsitePrompt } = require('./websitePrompt');
 const config = require('../lib/config');
 
 const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER'];
@@ -236,6 +237,15 @@ async function processCall({ client, payload, outcomeKnown }) {
       await logAction(client.id, 'AUTOMATION_SKIPPED', 'Proposal already sent for this client — not re-sending');
     } else {
       summary.automation = await runBookedAutomation(client, prefs);
+    }
+    // Write the Claude Code build prompt for this client's website (first booking only).
+    const fresh = await prisma.client.findUnique({ where: { id: client.id } });
+    if (!fresh.website_prompt) {
+      try {
+        await generateWebsitePrompt(fresh);
+      } catch (err) {
+        await logError(client.id, 'WEBSITE_PROMPT', err);
+      }
     }
   } else if (client.call_outcome === 'REJECTED' && client.portal_status === 'NEW_LEAD') {
     await prisma.client.update({ where: { id: client.id }, data: { portal_status: 'LOST' } });

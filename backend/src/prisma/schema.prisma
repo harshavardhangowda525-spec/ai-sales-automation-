@@ -84,6 +84,11 @@ model Client {
   notes             String?      @db.Text
   website_url       String?
   website_sent      Boolean      @default(false)
+  website_stage     WebsiteStage @default(NOT_STARTED)
+  website_prompt    String?      @db.Text // build prompt for Claude Code, written by Groq (or template)
+  website_prompt_source String?   // groq | template
+  website_prompt_at DateTime?    @db.Timestamptz(6)
+  website_preview_url String?
   created_at        DateTime     @default(now()) @db.Timestamptz(6)
   updated_at        DateTime     @updatedAt @db.Timestamptz(6)
 
@@ -129,8 +134,18 @@ model Proposal {
   @@map("proposals")
 }
 
+enum WebsiteStage {
+  NOT_STARTED
+  PROMPT_READY
+  IN_DEVELOPMENT
+  IN_REVIEW
+  READY
+  DELIVERED
+}
+
 enum OwnerCallType {
   SUMMARY   // end-of-campaign report
+  UPDATE    // "Jarvis, call me now" — calls + website progress, any time
   QUOTATION // approve sending a proposal to a client
   WEBSITE   // approve sending the live website link to a client
 }

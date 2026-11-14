@@ -28,11 +28,12 @@ router.get('/', async (req, res, next) => {
     ]);
 
     const pendingApprovals = await prisma.ownerCall.findMany({
-      where: { type: { not: 'SUMMARY' }, status: { in: ['QUEUED', 'CALLING', 'NEEDS_MANUAL', 'FAILED'] } },
+      where: { type: { in: ['QUOTATION', 'WEBSITE'] }, status: { in: ['QUEUED', 'CALLING', 'NEEDS_MANUAL', 'FAILED'] } },
       orderBy: { created_at: 'desc' },
       take: 20,
       include: { client: { select: { id: true, business_name: true, plan_interest: true } } },
     });
+    const stageGroups = await prisma.client.groupBy({ by: ['website_stage'], _count: { _all: true } });
     const count = (o) => outcomes.find((g) => g.call_outcome === o)?._count._all || 0;
     const booked = count('BOOKED');
     const converted = await prisma.client.count({ where: { portal_status: 'CONVERTED' } });
@@ -52,6 +53,7 @@ router.get('/', async (req, res, next) => {
       recent_clients: recentClients,
       recent_activity: activity,
       pending_approvals: pendingApprovals,
+      website_stages: Object.fromEntries(stageGroups.map((g) => [g.website_stage, g._count._all])),
     });
   } catch (err) {
     next(err);
