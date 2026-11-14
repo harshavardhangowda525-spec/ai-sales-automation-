@@ -1,0 +1,126 @@
+// Infinity Web & Apps — Sales Automation schema
+// All timestamps are stored as timestamptz (UTC instants) and rendered in IST (Asia/Kolkata).
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+  previewFeatures = ["omitApi"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CampaignStatus {
+  RUNNING
+  COMPLETED
+}
+
+enum CallOutcome {
+  BOOKED
+  REJECTED
+  NO_ANSWER
+  CALLBACK_LATER
+}
+
+enum PlanInterest {
+  BASIC
+  PREMIUM
+  ADVANCED
+  UNKNOWN
+}
+
+enum PortalStatus {
+  NEW_LEAD
+  PROPOSAL_SENT
+  MEETING_SCHEDULED
+  CONVERTED
+  LOST
+}
+
+model Campaign {
+  id                 String         @id @default(uuid()) @db.Uuid
+  name               String
+  status             CampaignStatus @default(RUNNING)
+  total_calls        Int            @default(0)
+  booked             Int            @default(0)
+  rejected           Int            @default(0)
+  no_answer          Int            @default(0)
+  callback_later     Int            @default(0)
+  // Sarvam-side identifiers (so webhooks carrying Sarvam's own campaign id map to this row)
+  sarvam_campaign_id String?        @unique
+  cohort_id          String?
+  agent_id           String?
+  summary_call_sent  Boolean        @default(false)
+  created_at         DateTime       @default(now()) @db.Timestamptz(6)
+  completed_at       DateTime?      @db.Timestamptz(6)
+
+  clients Client[]
+
+  @@map("campaigns")
+}
+
+model Client {
+  id                String       @id @default(uuid()) @db.Uuid
+  campaign_id       String?      @db.Uuid
+  call_id           String?      @unique // Sarvam call id — makes webhook processing idempotent
+  business_name     String
+  phone_number      String
+  contact_name      String?
+  call_outcome      CallOutcome
+  plan_interest     PlanInterest @default(UNKNOWN)
+  requirements      String?      @db.Text
+  preferred_time    String?
+  duration_seconds  Int?
+  meeting_link      String?
+  meeting_time      DateTime?    @db.Timestamptz(6)
+  calendar_event_id String?
+  proposal_sent     Boolean      @default(false)
+  proposal_url      String?
+  portal_status     PortalStatus @default(NEW_LEAD)
+  transcript        String?      @db.Text
+  notes             String?      @db.Text
+  created_at        DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime     @updatedAt @db.Timestamptz(6)
+
+  campaign  Campaign?  @relation(fields: [campaign_id], references: [id], onDelete: SetNull)
+  call_logs CallLog[]
+  proposals Proposal[]
+
+  @@index([campaign_id])
+  @@index([call_outcome])
+  @@index([created_at])
+  @@map("clients")
+}
+
+model CallLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  client_id String?  @db.Uuid // nullable so system-level errors can be logged too
+  action    String
+  details   String?  @db.Text
+  timestamp DateTime @default(now()) @db.Timestamptz(6)
+
+  client Client? @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@index([client_id])
+  @@index([timestamp])
+  @@map("call_logs")
+}
+
+// Proposal PDFs are stored in Postgres (Neon) and served publicly by the backend at
+// GET /proposals/:id.pdf — no separate object storage needed.
+model Proposal {
+  id         String   @id @default(uuid()) @db.Uuid
+  seq        Int      @unique @default(autoincrement()) // drives IWA-YYYY-NNNN numbering
+  number     String   @unique
+  client_id  String   @db.Uuid
+  plan       PlanInterest
+  pdf        Bytes
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  client Client @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@index([client_id])
+  @@map("proposals")
+}

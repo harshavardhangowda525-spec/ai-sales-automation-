@@ -1,0 +1,72 @@
+# Render Blueprint — New → Blueprint → pick this repo.
+# Secrets marked sync:false are entered in the Render dashboard on first deploy.
+services:
+  - type: web
+    name: infinity-automation-api
+    runtime: node
+    region: singapore
+    plan: starter            # "free" works too, but it sleeps and may miss webhooks
+    rootDir: backend
+    buildCommand: npm ci && npx prisma generate
+    preDeployCommand: npx prisma migrate deploy
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: SARVAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: SARVAM_ORG_ID
+        sync: false
+      - key: SARVAM_WORKSPACE_ID
+        sync: false
+      - key: SARVAM_CONNECTION_ID
+        sync: false
+      - key: SARVAM_AGENT_PHONE_NUMBER
+        sync: false
+      - key: SARVAM_SALES_AGENT_ID
+        sync: false
+      - key: SARVAM_SUMMARY_AGENT_ID
+        sync: false
+      - key: HARSHAVARDHAN_PHONE
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false
+      - key: WHATSAPP_API_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_TEMPLATE_NAME
+        value: infinity_proposal
+      - key: OPENAI_API_KEY
+        sync: false
+
+  - type: web
+    name: infinity-automation-dashboard
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false

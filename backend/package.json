@@ -1,0 +1,33 @@
+{
+  "name": "infinity-automation-backend",
+  "version": "1.0.0",
+  "description": "Infinity Web & Apps — sales automation backend (Sarvam AI → Google Meet → Proposal → WhatsApp)",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "build": "prisma generate",
+    "migrate": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "test:webhook": "node src/scripts/mockWebhook.js",
+    "google:token": "node src/scripts/getGoogleRefreshToken.js"
+  },
+  "prisma": {
+    "schema": "src/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.1.1",
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "fontkit": "^1.9.0",
+    "googleapis": "^144.0.0",
+    "pdfkit": "^0.15.2",
+    "prisma": "^5.22.0"
+  }
+}
