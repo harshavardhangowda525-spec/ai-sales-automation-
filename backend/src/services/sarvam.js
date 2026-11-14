@@ -90,15 +90,28 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
       allowed_schedule: {
         allowed_start_time: '10:00',
         allowed_end_time: '19:00',
-        allowed_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+        allowed_days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
         timezone: 'Asia/Kolkata',
       },
       app_config: {
         app_id: appId,
         app_version: appVersion,
         attempts_per_second: 0.5,
-        connection_configs: [connectionConfig()],
-        retry_config: { max_retries: 1, retry_interval_minutes: 60, retry_on: ['no_answer', 'busy'] },
+        // Campaign connection format (as returned by Sarvam for dashboard-created campaigns)
+        connection_configs: [{
+          connection_id: config.sarvam.connectionId,
+          phone_numbers: [config.sarvam.agentPhoneNumber],
+          weight: 1,
+        }],
+        retry_config: {
+          max_retries: 2,
+          retry_on: {
+            busy: { enabled: true },
+            failed: { enabled: true },
+            no_answer: { enabled: true },
+          },
+          retry_interval_minutes: [30, 30],
+        },
       },
       webhook_config: webhookConfig(campaign.id),
     });
