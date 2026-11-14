@@ -57,7 +57,9 @@ async function requestOwnerCall(type, { clientId = null, campaignId = null, data
   }
 
   await logAction(clientId, `OWNER_CALL_${type}_QUEUED`,
-    type === 'SUMMARY' ? 'Campaign summary call queued' : `Approval call queued${inCallingHours() ? '' : ' — will call during calling hours'}`);
+    type === 'SUMMARY' ? 'Campaign summary call queued'
+      : type === 'UPDATE' ? 'Jarvis status call requested — calling now'
+        : `Approval call queued${inCallingHours() ? '' : ' — will call during calling hours'}`);
   processQueue().catch((err) => logError(null, 'OWNER_CALL_QUEUE', err));
   return call;
 }
