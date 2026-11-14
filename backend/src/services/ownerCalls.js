@@ -36,6 +36,52 @@ function buildVariables(call, client) {
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
 }
 
+/**
+ * Background facts Jarvis can use to answer Harsha's questions during the call (not read out).
+ * Sent as the jarvis_context agent variable.
+ */
+async function buildJarvisContext() {
+  const plans = { BASIC: 'Basic ₹4,999', PREMIUM: 'Premium ₹8,999', ADVANCED: 'Advanced ₹15,000', UNKNOWN: 'plan not decided' };
+  const stage = {
+    NOT_STARTED: 'not started', PROMPT_READY: 'build prompt ready', IN_DEVELOPMENT: 'in development',
+    IN_REVIEW: 'in review', READY: 'ready, waiting for your OK', DELIVERED: 'delivered',
+  };
+  const campaign = await prisma.campaign.findFirst({ orderBy: { created_at: 'desc' } });
+  const booked = await prisma.client.findMany({
+    where: { call_outcome: 'BOOKED' }, orderBy: { created_at: 'desc' }, take: 10,
+  });
+  const callbacks = await prisma.client.findMany({
+    where: { call_outcome: 'CALLBACK_LATER' }, orderBy: { created_at: 'desc' }, take: 8,
+    select: { business_name: true, contact_name: true, preferred_time: true },
+  });
+  const pending = await prisma.ownerCall.findMany({
+    where: { type: { in: ['QUOTATION', 'WEBSITE'] }, status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } },
+    include: { client: { select: { business_name: true } } }, take: 10,
+  });
+  const lines = [];
+  lines.push(campaign
+    ? `Latest campaign: ${campaign.name} (${campaign.status.toLowerCase()}): ${campaign.booked} booked, ${campaign.callback_later} callback, ${campaign.rejected} rejected, ${campaign.no_answer} no answer.`
+    : 'No campaigns have run yet.');
+  if (booked.length) {
+    lines.push('Booked clients:');
+    for (const c of booked) {
+      lines.push(`- ${c.business_name}${c.contact_name ? ` (${c.contact_name})` : ''}: ${plans[c.plan_interest]}; `
+        + `meeting ${c.meeting_time ? formatMeetingTime(c.meeting_time) : 'not scheduled'}; `
+        + `quotation ${c.proposal_sent ? 'sent' : 'not sent yet'}; website ${stage[c.website_stage]}`
+        + `${c.requirements ? `; wants: ${c.requirements.replace(/\s*\n+\s*/g, ' ').slice(0, 160)}` : ''}`);
+    }
+  } else {
+    lines.push('No booked clients yet.');
+  }
+  if (callbacks.length) {
+    lines.push(`Asked for a callback: ${callbacks.map((c) => `${c.business_name}${c.preferred_time ? ` (${c.preferred_time})` : ''}`).join(', ')}.`);
+  }
+  lines.push(pending.length
+    ? `Waiting for Harsha's approval: ${pending.map((p) => `${p.type === 'QUOTATION' ? 'quotation' : 'website link'} for ${p.client?.business_name}`).join(', ')}.`
+    : 'Nothing is waiting for approval.');
+  return lines.join('\n').slice(0, 3500);
+}
+
 /** What Jarvis says on the call — written here so the agent doesn't need any extra variables. */
 function buildSpokenMessage(call, vars) {
   const num = (v) => Number(v) || 0;
@@ -55,7 +101,7 @@ function buildSpokenMessage(call, vars) {
     if (num(vars.no_answer_count)) parts.push(`${vars.no_answer_count} didn't pick up.`);
     if (call.type === 'UPDATE') parts.push(`Websites: ${vars.websites_summary}.`);
     if (num(vars.pending_approvals)) parts.push(`You have ${vars.pending_approvals} approvals waiting in the dashboard.`);
-    parts.push("That's all for now. Talk soon!");
+    parts.push('Anything you want to know more about?');
   } else if (call.type === 'QUOTATION') {
     parts.push(`Hey Harsha, Jarvis here. A new client booked: ${vars.business_name}${vars.contact_name !== '-' ? `, contact ${vars.contact_name}` : ''}.`);
     parts.push(`They're interested in the ${vars.plan_name} plan${vars.plan_price !== '-' ? ` at ${vars.plan_price}` : ''}.`);
@@ -113,7 +159,7 @@ async function placeCall(call) {
       phoneNumber: config.ownerPhone,
       appId: config.sarvam.summaryAgentId,
       appVersion: config.sarvam.summaryAgentVersion,
-      variables: { ...variables, harsha_message: message },
+      variables: { ...variables, harsha_message: message, jarvis_context: await buildJarvisContext() },
       appOverrides: { initial_bot_message: message },
       webhook: {
         url: `${config.publicBaseUrl}/webhook/sarvam/owner${secret}`,
@@ -345,6 +391,6 @@ function startOwnerCallWorker() {
 }
 
 module.exports = {
-  requestUpdateCall, buildUpdateData, buildSpokenMessage,
+  requestUpdateCall, buildUpdateData, buildSpokenMessage, buildJarvisContext,
   requestOwnerCall, processQueue, handleOwnerWebhook, decide, retryOwnerCall, startOwnerCallWorker, parseDecision, buildVariables,
 };
