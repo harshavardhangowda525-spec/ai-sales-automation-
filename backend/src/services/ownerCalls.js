@@ -88,8 +88,8 @@ function buildSpokenMessage(call, vars) {
   const parts = [];
   if (call.type === 'UPDATE' || call.type === 'SUMMARY') {
     parts.push(call.type === 'UPDATE'
-      ? 'Hello sir, Jarvis here with your update.'
-      : 'Hello sir, Jarvis here. Your outreach campaign is wrapped up.');
+      ? "Here's your update, sir."
+      : 'Your outreach campaign is wrapped up, sir.');
     if (call.type === 'UPDATE' && vars.campaign_name && vars.campaign_name !== '-') {
       parts.push(num(vars.total_calls) ? `On ${vars.campaign_name}, ${vars.total_calls} calls were made.` : 'No calls have been made yet.');
     }
@@ -103,12 +103,12 @@ function buildSpokenMessage(call, vars) {
     if (num(vars.pending_approvals)) parts.push(`You have ${vars.pending_approvals} approvals waiting in the dashboard.`);
     parts.push('Anything you want to know more about?');
   } else if (call.type === 'QUOTATION') {
-    parts.push(`Hello sir, Jarvis here. A new client booked: ${vars.business_name}${vars.contact_name !== '-' ? `, contact ${vars.contact_name}` : ''}.`);
+    parts.push(`A new client just booked, sir: ${vars.business_name}${vars.contact_name !== '-' ? `, contact ${vars.contact_name}` : ''}.`);
     parts.push(`They're interested in the ${vars.plan_name} plan${vars.plan_price !== '-' ? ` at ${vars.plan_price}` : ''}.`);
     if (vars.meeting_time !== '-') parts.push(`The consultation is on ${vars.meeting_time}.`);
     parts.push('Should I send them the quotation on WhatsApp? Say yes or no.');
   } else if (call.type === 'WEBSITE') {
-    parts.push(`Hello sir, Jarvis here. The website for ${vars.business_name} is ready at ${vars.website_url}.`);
+    parts.push(`The website for ${vars.business_name} is ready, sir, at ${vars.website_url}.`);
     parts.push(`Should I send the link to ${vars.contact_name !== '-' ? vars.contact_name : 'the client'} on WhatsApp? Say yes or no.`);
   }
   return parts.join(' ');
