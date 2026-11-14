@@ -128,7 +128,8 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
           users: contacts.slice(0, 1000).map((c) => ({
             user_phone_number: toE164(c.phone_number),
             user_identifier: c.business_name || undefined,
-            app_variables: { business_name: c.business_name || '' },
+            // One agent handles every call; call_type tells it which script to follow.
+            app_variables: { call_type: 'sales', business_name: c.business_name || '' },
           })),
         });
     }
