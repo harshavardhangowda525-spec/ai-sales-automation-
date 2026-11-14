@@ -37,20 +37,43 @@ function webhookConfig(campaignId) {
   };
 }
 
-/** Instant outbound call (used for the end-of-campaign summary call to Harshavardhan). */
-async function placeOutboundCall({ phoneNumber, appId, appVersion, variables, webhook }) {
+/** Names Sarvam reports as "not found in agent variables", or [] if that isn't the error. */
+function missingAgentVariables(err) {
+  const m = /Agent variables '\{([^}]*)\}' not found/.exec(err.message || '');
+  return m ? m[1].split(',').map((v) => v.trim().replace(/^'|'$/g, '')).filter(Boolean) : [];
+}
+
+/**
+ * Instant outbound call (used for calls to Harshavardhan).
+ * - appOverrides.initial_bot_message sets what the agent says first on this call.
+ * - Variables the agent doesn't define are dropped and the call is retried once, so a call still
+ *   goes through when the agent hasn't been updated with every variable.
+ */
+async function placeOutboundCall({ phoneNumber, appId, appVersion, variables, webhook, appOverrides }) {
   const { orgId, workspaceId } = base();
-  return sarvamRequest('POST', `/outbounds/v1/orgs/${orgId}/workspaces/${workspaceId}/outbounds`, {
+  let agentVariables = Object.fromEntries(Object.entries(variables || {}).map(([k, v]) => [k, String(v)]));
+  const send = () => sarvamRequest('POST', `/outbounds/v1/orgs/${orgId}/workspaces/${workspaceId}/outbounds`, {
     app_config: {
       app_id: appId,
       app_version: appVersion,
       connection_config: connectionConfig(),
-      // Sarvam agent variables are strings
-      agent_variables: Object.fromEntries(Object.entries(variables).map(([k, v]) => [k, String(v)])),
+      agent_variables: agentVariables,
+      ...(appOverrides ? { app_overrides: appOverrides } : {}),
     },
     user_config: { user_phone_number: toE164(phoneNumber) },
     ...(webhook ? { webhook_config: webhook } : {}),
   });
+
+  try {
+    return await send();
+  } catch (err) {
+    const missing = missingAgentVariables(err);
+    if (!missing.length) throw err;
+    agentVariables = Object.fromEntries(Object.entries(agentVariables).filter(([k]) => !missing.includes(k)));
+    await logAction(null, 'SARVAM_VARIABLES_SKIPPED',
+      `Agent ${appId} v${appVersion} doesn't define: ${missing.join(', ')} — calling without them`);
+    return send();
+  }
 }
 
 /**

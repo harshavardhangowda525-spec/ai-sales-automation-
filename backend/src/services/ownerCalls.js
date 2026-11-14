@@ -36,6 +36,38 @@ function buildVariables(call, client) {
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
 }
 
+/** What Jarvis says on the call — written here so the agent doesn't need any extra variables. */
+function buildSpokenMessage(call, vars) {
+  const num = (v) => Number(v) || 0;
+  const parts = [];
+  if (call.type === 'UPDATE' || call.type === 'SUMMARY') {
+    parts.push(call.type === 'UPDATE'
+      ? 'Hey Harsha, Jarvis here with your update.'
+      : 'Hey Harsha, Jarvis here. Your outreach campaign is wrapped up.');
+    if (call.type === 'UPDATE' && vars.campaign_name && vars.campaign_name !== '-') {
+      parts.push(num(vars.total_calls) ? `On ${vars.campaign_name}, ${vars.total_calls} calls were made.` : 'No calls have been made yet.');
+    }
+    if (num(vars.booked_count)) parts.push(`${vars.booked_count} booked: ${vars.booked_names}.`);
+    else if (call.type === 'SUMMARY') parts.push('No bookings this time.');
+    if (num(vars.meets_scheduled)) parts.push(`${vars.meets_scheduled} Google Meets are scheduled.`);
+    if (num(vars.callback_count)) parts.push(`${vars.callback_count} want a callback.`);
+    if (num(vars.rejected_count)) parts.push(`${vars.rejected_count} rejected.`);
+    if (num(vars.no_answer_count)) parts.push(`${vars.no_answer_count} didn't pick up.`);
+    if (call.type === 'UPDATE') parts.push(`Websites: ${vars.websites_summary}.`);
+    if (num(vars.pending_approvals)) parts.push(`You have ${vars.pending_approvals} approvals waiting in the dashboard.`);
+    parts.push("That's all for now. Talk soon!");
+  } else if (call.type === 'QUOTATION') {
+    parts.push(`Hey Harsha, Jarvis here. A new client booked: ${vars.business_name}${vars.contact_name !== '-' ? `, contact ${vars.contact_name}` : ''}.`);
+    parts.push(`They're interested in the ${vars.plan_name} plan${vars.plan_price !== '-' ? ` at ${vars.plan_price}` : ''}.`);
+    if (vars.meeting_time !== '-') parts.push(`The consultation is on ${vars.meeting_time}.`);
+    parts.push('Should I send them the quotation on WhatsApp? Say yes or no.');
+  } else if (call.type === 'WEBSITE') {
+    parts.push(`Hey Harsha, Jarvis here. The website for ${vars.business_name} is ready at ${vars.website_url}.`);
+    parts.push(`Should I send the link to ${vars.contact_name !== '-' ? vars.contact_name : 'the client'} on WhatsApp? Say yes or no.`);
+  }
+  return parts.join(' ');
+}
+
 /** Queue a call to Harshavardhan. Returns the OwnerCall row. */
 async function requestOwnerCall(type, { clientId = null, campaignId = null, data = null } = {}) {
   // One open approval per client+type is enough — refresh it instead of piling up calls.
@@ -75,11 +107,14 @@ async function placeCall(call) {
     data: { status: 'CALLING', attempts: { increment: 1 }, called_at: new Date() },
   });
   try {
+    const variables = buildVariables(call, client);
+    const message = buildSpokenMessage(call, variables);
     const result = await placeOutboundCall({
       phoneNumber: config.ownerPhone,
       appId: config.sarvam.summaryAgentId,
       appVersion: config.sarvam.summaryAgentVersion,
-      variables: buildVariables(call, client),
+      variables: { ...variables, harsha_message: message },
+      appOverrides: { initial_bot_message: message },
       webhook: {
         url: `${config.publicBaseUrl}/webhook/sarvam/owner${secret}`,
         metadata: { owner_call_id: call.id },
@@ -310,6 +345,6 @@ function startOwnerCallWorker() {
 }
 
 module.exports = {
-  requestUpdateCall, buildUpdateData,
+  requestUpdateCall, buildUpdateData, buildSpokenMessage,
   requestOwnerCall, processQueue, handleOwnerWebhook, decide, retryOwnerCall, startOwnerCallWorker, parseDecision, buildVariables,
 };
