@@ -286,6 +286,17 @@ async function requestUpdateCall() {
     throw Object.assign(new Error('Calls to you are not set up: needs the Sarvam agent, connection and HARSHAVARDHAN_PHONE'), { status: 400 });
   }
   const data = await buildUpdateData();
+  // Reuse a status call that is still waiting (e.g. after a failure) instead of calling twice.
+  const waiting = await prisma.ownerCall.findFirst({ where: { type: 'UPDATE', status: 'QUEUED' }, orderBy: { created_at: 'desc' } });
+  if (waiting) {
+    const call = await prisma.ownerCall.update({
+      where: { id: waiting.id },
+      data: { data, attempts: 0, next_attempt_at: new Date(), decision_note: null },
+    });
+    await logAction(null, 'OWNER_CALL_UPDATE_QUEUED', 'Jarvis status call requested again — calling now');
+    processQueue().catch((err) => logError(null, 'OWNER_CALL_QUEUE', err));
+    return { call, data };
+  }
   const call = await requestOwnerCall('UPDATE', { data });
   return { call, data };
 }

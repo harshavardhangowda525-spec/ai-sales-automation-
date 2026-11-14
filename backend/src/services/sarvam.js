@@ -18,7 +18,7 @@ async function sarvamRequest(method, urlPath, body) {
     signal: AbortSignal.timeout(30000),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Sarvam ${method} ${urlPath} → ${res.status}: ${JSON.stringify(json).slice(0, 600)}`);
+  if (!res.ok) throw new Error(`Sarvam ${method} ${urlPath} → ${res.status}: ${JSON.stringify(json).slice(0, 1500)}`);
   return json;
 }
 
