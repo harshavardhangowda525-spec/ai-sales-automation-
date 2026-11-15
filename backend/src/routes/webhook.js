@@ -458,7 +458,10 @@ async function deployFor(client, res) {
 
 async function quotationFor(client, src, res) {
   try {
-    const r = await sendQuotation(client.id, { phone: src.phone || src.number, source: 'Jarvis call' });
+    // Jarvis often puts the number inside the instructions ("send it to 9 9 8 0 8 ...").
+    const spoken = String(src.instructions || '').replace(/[^\d+]/g, '');
+    const fromText = (spoken.match(/(?:\+?91)?[6-9]\d{9}/) || [])[0];
+    const r = await sendQuotation(client.id, { phone: src.phone || src.number || fromText, source: 'Jarvis call' });
     const to = r.client.phone_number;
     return res.json({
       answer: r.via === 'asked_email'
@@ -500,17 +503,25 @@ async function jarvisAddClient(req, res) {
   const { src, isOwner } = toolInput(req);
   if (!isOwner) return res.json({ answer: 'Only sir can add clients.' });
   try {
-    const name = src.business_name || src.client || src.name;
+    let name = src.business_name || src.client || src.name;
     if (!name) return res.json({ answer: "What's the business name, sir?" });
+    const rawPhone = src.phone || src.phone_number_client || src.number;
+    const digits = String(rawPhone || '').replace(/\D/g, '').replace(/^(91|0)(?=\d{10}$)/, '');
+    if (rawPhone && digits.length !== 10) {
+      return res.json({ answer: `That number has ${digits.length} digits, sir — I need all 10. Could you say it again?` });
+    }
+    // A slightly misheard name of an existing client updates that client instead of adding a new one.
+    const known = await findClient(name).catch(() => null);
+    if (known && nameSimilarity(name, known.business_name) >= 0.75) name = known.business_name;
     const { client, created } = await addClient({
-      business_name: name, contact_name: src.contact_name, phone: src.phone || src.phone_number_client || src.number, email: src.email,
+      business_name: name, contact_name: src.contact_name, phone: rawPhone, email: src.email,
       plan: src.plan, requirements: src.requirements, notes: src.notes,
     }, 'Jarvis call');
     const noPhone = client.phone_number === '-' ? " I don't have their phone number yet — tell me if you want me to add it." : '';
     return res.json({
       answer: created
         ? `Done, sir. I've added ${client.business_name}${client.contact_name ? ` (${client.contact_name})` : ''} to your clients.${noPhone}`
-        : `${client.business_name} was already in your clients, sir — I've updated their details.`,
+        : `${client.business_name} was already in your clients, sir — I've updated their details${client.phone_number !== '-' ? `; their number is ${client.phone_number}` : ''}.`,
     });
   } catch (err) {
     await logError(null, 'JARVIS_ADD_CLIENT', err);

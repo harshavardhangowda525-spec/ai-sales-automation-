@@ -26,22 +26,27 @@ async function addClient({ business_name, contact_name, phone, plan, requirement
   if (!name) throw Object.assign(new Error('business name is required'), { status: 400 });
   const phoneE164 = normalizePhone(phone);
 
-  if (phoneE164) {
-    const existing = await prisma.client.findFirst({ where: { phone_number: phoneE164 }, orderBy: { created_at: 'desc' } });
-    if (existing) {
-      const updated = await prisma.client.update({
-        where: { id: existing.id },
-        data: {
-          ...(contact_name && !existing.contact_name ? { contact_name } : {}),
-          ...(mail ? { email: mail } : {}),
-          ...(plan && normalizePlan(plan) !== 'UNKNOWN' ? { plan_interest: normalizePlan(plan) } : {}),
-          ...(requirements ? { requirements: [existing.requirements, requirements].filter(Boolean).join('\n') } : {}),
-          ...(notes ? { notes: [existing.notes, notes].filter(Boolean).join('\n') } : {}),
-        },
-      });
-      await logAction(existing.id, 'CLIENT_UPDATED', `Updated by ${source}`);
-      return { client: updated, created: false };
-    }
+  // Same business already on file (by name) → update it, including the phone number sir just gave.
+  // Never match on the phone alone: one number can belong to someone else (e.g. a personal contact).
+  const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const sameName = (await prisma.client.findMany({
+    where: { business_name: { contains: name.split(/\s+/)[0], mode: 'insensitive' } },
+    orderBy: { updated_at: 'desc' },
+  })).find((c) => norm(c.business_name) === norm(name));
+  if (sameName) {
+    const updated = await prisma.client.update({
+      where: { id: sameName.id },
+      data: {
+        ...(phoneE164 ? { phone_number: phoneE164 } : {}),
+        ...(contact_name && !sameName.contact_name ? { contact_name } : {}),
+        ...(mail ? { email: mail } : {}),
+        ...(plan && normalizePlan(plan) !== 'UNKNOWN' ? { plan_interest: normalizePlan(plan) } : {}),
+        ...(requirements && !String(sameName.requirements || '').includes(requirements) ? { requirements: [sameName.requirements, requirements].filter(Boolean).join('\n') } : {}),
+        ...(notes ? { notes: [sameName.notes, notes].filter(Boolean).join('\n') } : {}),
+      },
+    });
+    await logAction(sameName.id, 'CLIENT_UPDATED', `Updated by ${source}${phoneE164 && phoneE164 !== sameName.phone_number ? ` — phone set to ${phoneE164}` : ''}`);
+    return { client: updated, created: false };
   }
 
   const client = await prisma.client.create({
