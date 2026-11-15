@@ -183,4 +183,26 @@ See you there! If the time doesn't work, just reply here. 😊`;
   return id;
 }
 
-module.exports = { sendWhatsAppMessage, sendWebsiteReadyMessage, sendMeetingMessage, buildMessageText, buildWebsiteText };
+function buildFounderIntroText(client) {
+  const name = client.contact_name?.split(' ')[0] || 'there';
+  return `Hi ${name}! 👋
+
+This is ${config.founderName}, founder of *Infinity Web & Apps*. Thanks for your interest on the call just now!
+
+Save this number — you can call or WhatsApp me here anytime to discuss your website${client.business_name && client.business_name !== 'Unknown business' ? ` for *${client.business_name}*` : ''}: designs, pricing, timelines, anything you'd like to know. 😊
+
+Plans start at just ₹4,999, one-time.`;
+}
+
+/** Instant intro to an interested lead, from the founder's linked WhatsApp. */
+async function sendFounderIntro(client) {
+  if (!(await waLinked.hasSession())) throw new Error('Your WhatsApp is not linked');
+  const to = toWhatsAppId(client.phone_number);
+  const id = await waLinked.sendText(to, buildFounderIntroText(client));
+  await logAction(client.id, 'FOUNDER_INTRO_SENT', `Interested lead WhatsApped from your number (+${to}) so they can reach you directly`);
+  return id;
+}
+
+module.exports = {
+  sendWhatsAppMessage, sendWebsiteReadyMessage, sendMeetingMessage, sendFounderIntro, buildMessageText, buildWebsiteText, buildFounderIntroText,
+};

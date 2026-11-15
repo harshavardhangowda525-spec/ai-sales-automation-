@@ -32,6 +32,10 @@ const config = {
   meetingRoomUrl: env('MEETING_ROOM_URL'),
   // Link clients use to review their project (your client portal). Used in "website ready to review" messages.
   clientPortalUrl: env('CLIENT_PORTAL_URL'),
+  // When a lead is interested, WhatsApp them right away (from the linked WhatsApp) so they can
+  // call/message the founder directly — no call transfer.
+  founderName: env('FOUNDER_NAME', 'Harshavardhan'),
+  founderIntroOnInterest: env('FOUNDER_INTRO_ON_INTEREST', 'false') === 'true', // off until enabled
   ownerCalls: {
     // Ask Harshavardhan on a call before a quotation goes to the client (default on)
     requireQuotationApproval: env('REQUIRE_QUOTATION_APPROVAL', 'true') !== 'false',

@@ -9,6 +9,7 @@ const { sendWhatsAppMessage } = require('./whatsapp');
 const { triggerSummaryCall } = require('./sarvam');
 const { requestOwnerCall } = require('./ownerCalls');
 const { generateWebsitePrompt } = require('./websitePrompt');
+const { sendFounderIntro } = require('./whatsapp');
 const config = require('../lib/config');
 
 const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER'];
@@ -232,6 +233,17 @@ async function processCall({ client, payload, outcomeKnown }) {
   }
 
   // 2. Outcome-specific automation
+  // Interested lead → WhatsApp them from the founder's number right away (once per client).
+  if (client.call_outcome === 'BOOKED' && config.founderIntroOnInterest) {
+    const already = await prisma.callLog.count({ where: { client_id: client.id, action: 'FOUNDER_INTRO_SENT' } });
+    if (!already) {
+      try {
+        await sendFounderIntro(client);
+      } catch (err) {
+        await logError(client.id, 'FOUNDER_INTRO', err);
+      }
+    }
+  }
   if (client.call_outcome === 'BOOKED') {
     if (client.proposal_sent) {
       await logAction(client.id, 'AUTOMATION_SKIPPED', 'Proposal already sent for this client — not re-sending');
