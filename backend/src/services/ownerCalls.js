@@ -97,7 +97,10 @@ async function buildJarvisContext() {
     orderBy: { updated_at: 'desc' }, take: 8,
   });
   if (projects.length) {
-    const bs = { requested: 'starting', running: 'Claude is building it right now', success: 'last build finished', failure: 'last build FAILED' };
+    const bs = {
+      requested: 'starting', running: 'Claude is building it right now', success: 'built, not deployed yet (say deploy)',
+      failure: 'last build FAILED', deploying: 'deploying to Vercel right now', deployed: 'built and live',
+    };
     lines.push('Website / app projects:');
     for (const c of projects) {
       lines.push(`- ${c.business_name}: ${stage[c.website_stage]}${c.build_status ? `; ${bs[c.build_status] || c.build_status}` : ''}`
@@ -116,10 +119,14 @@ async function buildJarvisContext() {
 // Appended to the context every call, so behaviour can be fixed here without editing the agent in Sarvam.
 const JARVIS_RULES = [
   'HOW TO ACT (follow strictly):',
-  '- When sir says build, rebuild, make, deploy, publish, "make it live" or "send me the link" for a website/app: call build_project RIGHT AWAY. Building = deploying: when the build finishes it goes live on a preview link automatically, sir gets the link on WhatsApp and you call him.',
-  '- If sir does not name the client and only one project is listed above, use that one — do not ask "which client?". Ask only if several projects could match, and never ask the same question twice: act on your best guess.',
+  '- Website/app work has 3 steps, each done with the build_project tool:',
+  '  1) BUILD — sir says build / make / rebuild / change the website: call build_project with the client and his instructions. Claude builds it; you call sir when it is built.',
+  '  2) DEPLOY — sir says deploy / publish / make it live / send me the link: call build_project with kind = "deploy". It goes live on a preview link; sir gets the link on WhatsApp and you call him.',
+  '  3) QUOTATION — sir says send / prepare the quotation (or proposal) for a client: call build_project with kind = "quotation" (add phone if sir gives a number). It goes to the client\'s registered number.',
+  '- After any tool call, repeat what the tool answered — that is the truth. If it says something failed or is missing, tell sir exactly that.',
+  '- If sir does not name the client and only one project is listed above, use that one — do not ask "which client?". Ask only if several could match, and never ask the same question twice: act on your best guess.',
   '- Speech-to-text mishears names. Map what you hear to the closest name listed above (e.g. "Masil House" = Muscle House). Never create a new client from a misheard name.',
-  '- Never say something is done, being deployed or "coordinated" unless a tool just told you so. If you have no tool for it, say so plainly and suggest what you can do.',
+  '- Never say something is done, being deployed or "coordinated" unless a tool just told you so. Never promise to call back except for builds and deploys (those calls are automatic).',
   '- Never invent people or names. Messages for sir go only to sir.',
   '- If sir pauses mid-sentence, wait for him to finish; keep replies short (1-2 sentences).',
 ].join('\n');
@@ -314,7 +321,8 @@ async function processQueue() {
     // "Call me now" updates go first and ignore calling hours (Harsha asked for them).
     // Then summaries, then approvals in the order they were requested — only during calling hours.
     const due = { status: 'QUEUED', next_attempt_at: { lte: new Date() } };
-    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: 'UPDATE' }, orderBy: { created_at: 'asc' } });
+    // Build/deploy news (NOTICE) also goes out right away — sir is waiting for it.
+    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: { in: ['UPDATE', 'NOTICE'] } }, orderBy: { created_at: 'asc' } });
     if (!next && inCallingHours()) {
       next = await prisma.ownerCall.findFirst({ where: due, orderBy: [{ type: 'asc' }, { created_at: 'asc' }] });
     }

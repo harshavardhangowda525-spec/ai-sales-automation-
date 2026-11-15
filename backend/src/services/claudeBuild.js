@@ -18,7 +18,7 @@ function buildPrompt(client, { kind = 'website', instructions }) {
     kind === 'mobile' ? 'Include clear steps in the README to run it with Expo Go and to make Android/iOS builds with EAS.' : null,
     'If the project already exists, continue from where it is and improve it rather than starting over.',
     'IMPORTANT: create the real project files in this repository NOW with the Write tool — do not stop after planning, do not ask questions, and do not just describe what you would do. The run fails if no project files exist.',
-    'It will be deployed automatically to Vercel with zero configuration: use a standard setup (e.g. Vite + React, Next.js, or plain HTML/CSS/JS), keep it at the repository root, make sure `npm install && npm run build` succeeds if it has a package.json, and run the build once to check before you finish.',
+    'It will be deployed to Vercel with zero configuration: use a standard setup (e.g. Vite + React, Next.js, or plain HTML/CSS/JS), keep it at the repository root, make sure `npm install && npm run build` succeeds if it has a package.json, and run the build once to check before you finish.',
     'Finish by listing the files you created.',
     instructions ? `Latest instructions from the founder (take priority over older ones): ${instructions}` : null,
     'Work fully autonomously — there is no one to answer questions. Make sensible decisions and note them in PLAN.md.',
@@ -34,6 +34,11 @@ async function requestBuild(clientId, { kind = 'website', instructions = null, s
   if (!config.claudeCodeToken) throw Object.assign(new Error('Claude is not connected — add CLAUDE_CODE_OAUTH_TOKEN on Render (from `claude setup-token`)'), { status: 400 });
 
   let client = await prisma.client.findUnique({ where: { id: clientId } });
+  // Don't start a second build while one is running (Jarvis may hear "build" twice).
+  if (['requested', 'running', 'deploying'].includes(client.build_status)
+    && client.build_requested_at && Date.now() - client.build_requested_at.getTime() < 45 * 60000) {
+    throw Object.assign(new Error(`${client.business_name} is already ${client.build_status === 'deploying' ? 'deploying' : 'being built'} — I'll call you when it's done`), { status: 409 });
+  }
   if (!client.website_prompt) client = await generateWebsitePrompt(client);
   if (!client.github_repo) client = await createClientRepo(client.id);
 
@@ -80,7 +85,7 @@ async function requestBuild(clientId, { kind = 'website', instructions = null, s
         + `\nRepo: https://github.com/${client.github_repo}`
         + `\nLive progress: ${runsUrl}`
         + `${instructions ? `\nYour instructions: "${instructions.slice(0, 200)}"` : ''}`
-        + '\n\nI\'ll call you when it\'s done.');
+        + '\n\nI\'ll call you when it\'s built.');
     }
   } catch {
     // notification is best-effort
@@ -90,71 +95,133 @@ async function requestBuild(clientId, { kind = 'website', instructions = null, s
   return updated;
 }
 
-/** Callback from the workflow's last step. */
-async function handleBuildDone({ repo, status, run_url: runUrl, preview_url: previewRaw }) {
+async function notifyOwner(text) {
+  try {
+    const waLinked = require('./waLinked');
+    if (config.ownerPhone && (await waLinked.hasSession())) await waLinked.sendText(config.ownerPhone, text);
+  } catch {
+    // best effort
+  }
+}
+
+async function noticeCall(clientId, notice) {
+  try {
+    await require('./ownerCalls').requestOwnerCall('NOTICE', { clientId, data: { notice } });
+  } catch {
+    // best effort
+  }
+}
+
+/** Publish the code Claude built to Vercel (no Claude run) — sir says "deploy it". */
+async function requestDeploy(clientId, { source = 'dashboard' } = {}) {
+  let client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) throw Object.assign(new Error('Client not found'), { status: 404 });
+  if (!client.github_repo) throw Object.assign(new Error(`Nothing is built for ${client.business_name} yet — build it first`), { status: 400 });
+  if (['requested', 'running', 'deploying'].includes(client.build_status)) {
+    throw Object.assign(new Error(`${client.business_name} is still ${client.build_status === 'deploying' ? 'deploying' : 'being built'} — I'll call you when it's done`), { status: 409 });
+  }
+  if (!config.vercel.token) throw Object.assign(new Error('Vercel is not connected (VERCEL_TOKEN missing on the server)'), { status: 400 });
+  const secret = config.webhookSecret ? `?secret=${encodeURIComponent(config.webhookSecret)}` : '';
+  await ensureBuildSetup(client.github_repo, {
+    claudeToken: config.claudeCodeToken,
+    callbackUrl: `${config.publicBaseUrl}/webhook/github/build-done${secret}`,
+    vercelToken: config.vercel.token,
+    vercelScope: config.vercel.scope,
+  });
+  let runsUrl;
+  for (let i = 0; i < 6 && !runsUrl; i++) {
+    try {
+      runsUrl = await dispatchBuild(client.github_repo, '-', 'deploy');
+    } catch (err) {
+      if (err.status !== 404 || i === 5) throw err;
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+  }
+  client = await prisma.client.update({
+    where: { id: client.id },
+    data: { build_status: 'deploying', build_run_url: runsUrl, build_requested_at: new Date(), build_finished_at: null },
+  });
+  await logAction(client.id, 'DEPLOY_STARTED', `Deploying ${client.business_name} to Vercel (requested from ${source})`);
+  await notifyOwner(`🚀 Sir, deploying *${client.business_name}* to a live preview link now. I'll call you and send the link when it's up.`);
+  return client;
+}
+
+/** Callback from the workflow's last step (build or deploy). */
+async function handleBuildDone({ repo, status, run_url: runUrl, preview_url: previewRaw, mode }) {
   const previewUrl = /^https:\/\//.test(String(previewRaw || '')) ? String(previewRaw) : null;
   const client = await prisma.client.findFirst({ where: { github_repo: repo } });
   if (!client) return { ignored: true };
   const ok = status === 'success';
+  const deploy = mode === 'deploy';
   await prisma.client.update({
     where: { id: client.id },
     data: {
-      build_status: ok ? 'success' : 'failure',
+      // a failed deploy doesn't undo a good build
+      build_status: deploy ? (ok ? 'deployed' : 'success') : (ok ? 'success' : 'failure'),
       build_run_url: runUrl || client.build_run_url,
       build_finished_at: new Date(),
       ...(previewUrl ? { website_preview_url: previewUrl } : {}),
-      ...(ok && client.website_stage === 'IN_DEVELOPMENT' ? { website_stage: 'IN_REVIEW' } : {}),
+      ...(!deploy && ok && client.website_stage === 'IN_DEVELOPMENT' ? { website_stage: 'IN_REVIEW' } : {}),
+      ...(deploy && ok && ['IN_DEVELOPMENT', 'IN_REVIEW'].includes(client.website_stage) ? { website_stage: 'READY' } : {}),
     },
   });
-  await logAction(client.id, ok ? 'CLAUDE_BUILD_DONE' : 'CLAUDE_BUILD_ERROR',
-    ok ? `Claude finished building — code in ${client.github_repo}${previewUrl ? `, live preview ${previewUrl}` : ''}. Run: ${runUrl}` : `Claude build ${status} — see ${runUrl}`);
 
-  // Jarvis calls the founder with the news.
-  try {
-    const { requestOwnerCall } = require('./ownerCalls');
-    await requestOwnerCall('NOTICE', {
-      clientId: client.id,
-      data: {
-        notice: ok
-          ? `Claude has finished building the project for ${client.business_name}. ${previewUrl ? "It's live on a preview link — I've sent it to you on WhatsApp." : "The code is in its GitHub repo and it's waiting for your review."}`
-          : `Claude's build for ${client.business_name} didn't finish — it ${status}. The details are in the dashboard.`,
-      },
-    });
-  } catch {
-    // best effort
-  }
-
-  const waLinked = require('./waLinked');
-  const linked = await waLinked.hasSession().catch(() => false);
-  // WhatsApp the founder the links too.
-  if (linked && config.ownerPhone) {
-    await waLinked.sendText(config.ownerPhone, ok
-      ? `✅ Sir, Claude finished building *${client.business_name}*.${previewUrl ? `\n🌐 Live preview: ${previewUrl}` : ''}\nCode: https://github.com/${repo}\nRun: ${runUrl}`
-      : `⚠️ Sir, Claude's build for *${client.business_name}* ${status}. Details: ${runUrl}`).catch(() => {});
-  }
-  // Tell the client their website is ready to review (only on success, only with a link to review).
-  const reviewLink = previewUrl || client.website_preview_url || config.clientPortalUrl;
-  const hasPhone = String(client.phone_number || '').replace(/\D/g, '').length >= 10;
-  if (ok && linked && reviewLink && hasPhone) {
-    const name = client.contact_name?.split(' ')[0] || 'there';
-    try {
-      await waLinked.sendText(client.phone_number, `Hi ${name}! 🎉
-
-Great news — your website for *${client.business_name}* is nearly complete and ready for your review.
-
-👉 Review it here: ${reviewLink}
-
-Have a look and tell us anything you'd like changed — just reply here. 😊
-
-*Infinity Web & Apps*`);
-      await logAction(client.id, 'WHATSAPP_SENT', `Told the client the site is ready to review (${reviewLink})`);
-    } catch (err) {
-      await logAction(client.id, 'WHATSAPP_SEND_ERROR', `Couldn't tell the client the site is ready: ${err.message}`);
+  if (deploy) {
+    if (ok && previewUrl) {
+      await logAction(client.id, 'DEPLOY_DONE', `${client.business_name} is live at ${previewUrl}`);
+      await notifyOwner(`🌐 Sir, *${client.business_name}* is live:\n${previewUrl}\n\nHave a look. When you're happy, tell Jarvis "send the quotation to ${client.business_name}" and it goes to the client.`);
+      await noticeCall(client.id, `${client.business_name} is now live on its preview link — I've sent it to you on WhatsApp. Have a look, and when you're happy, just tell me to send the quotation to the client.`);
+    } else {
+      await logAction(client.id, 'DEPLOY_ERROR', `Vercel deploy ${status} — ${runUrl}`);
+      await notifyOwner(`⚠️ Sir, the deploy for *${client.business_name}* failed. Usually this is the Vercel token (it needs full access). Details: ${runUrl}`);
+      await noticeCall(client.id, `The deploy for ${client.business_name} didn't go through. The details are on WhatsApp — most likely the Vercel token needs full access.`);
     }
-  } else if (ok && (!reviewLink || !hasPhone)) {
-    await logAction(client.id, 'CLIENT_REVIEW_NOT_SENT', !hasPhone ? 'Build done — no phone number saved for the client, so they were not messaged' : 'Build done, but no preview link to send the client yet');
+    return { ok: true };
+  }
+
+  await logAction(client.id, ok ? 'CLAUDE_BUILD_DONE' : 'CLAUDE_BUILD_ERROR',
+    ok ? `Claude finished building — code in ${client.github_repo}. Run: ${runUrl}` : `Claude build ${status} — see ${runUrl}`);
+  if (ok) {
+    await notifyOwner(`✅ Sir, Claude finished building *${client.business_name}*.\nCode: https://github.com/${repo}\n\nTell Jarvis "deploy it" to put it on a live link.`);
+    await noticeCall(client.id, `Claude has finished building ${client.business_name}. Say "deploy it" and I'll put it live and send you the link.`);
+  } else {
+    await notifyOwner(`⚠️ Sir, Claude's build for *${client.business_name}* ${status}. Details: ${runUrl}`);
+    await noticeCall(client.id, `Claude's build for ${client.business_name} didn't finish. The details are on WhatsApp — want me to try again?`);
   }
   return { ok: true };
 }
 
-module.exports = { requestBuild, handleBuildDone, buildPrompt, KIND_LABEL };
+/**
+ * Sir said "send the quotation to X": make the proposal and send it to the client's registered
+ * number (via the Client Portal when connected, else the PDF on WhatsApp). Sir's word is the approval.
+ */
+async function sendQuotation(clientId, { phone = null, source = 'Jarvis call' } = {}) {
+  let client = await prisma.client.findUnique({ where: { id: clientId } });
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length >= 10) {
+    const { toE164 } = require('../lib/phone');
+    client = await prisma.client.update({ where: { id: client.id }, data: { phone_number: toE164(phone) } });
+  }
+  if (String(client.phone_number || '').replace(/\D/g, '').length < 10) {
+    throw Object.assign(new Error(`I don't have a phone number for ${client.business_name}, sir. Tell me their number and I'll send it.`), { status: 400 });
+  }
+  const portal = require('./clientPortal');
+  if (portal.isConfigured()) {
+    const r = await portal.deliverApprovedQuotation(client);
+    await logAction(client.id, 'QUOTATION_SENT', `Quotation sent via the Client Portal (${source})${r.status === 'asked_email' ? ' — asked the client for their email first' : ''}`);
+    return { client, via: r.status === 'asked_email' ? 'asked_email' : 'portal' };
+  }
+  const { generateProposal } = require('./proposalGenerator');
+  const { sendWhatsAppMessage } = require('./whatsapp');
+  const proposal = await generateProposal(client);
+  const fresh = await prisma.client.findUnique({ where: { id: client.id } });
+  await sendWhatsAppMessage(fresh, fresh.proposal_url, fresh.meeting_link, fresh.meeting_time, { proposalNumber: proposal.number });
+  await prisma.client.update({
+    where: { id: client.id },
+    data: { proposal_sent: true, ...(['CONVERTED', 'LOST', 'MEETING_SCHEDULED'].includes(fresh.portal_status) ? {} : { portal_status: 'PROPOSAL_SENT' }) },
+  });
+  await logAction(client.id, 'QUOTATION_SENT', `${proposal.number} sent to ${fresh.phone_number} on WhatsApp (${source})`);
+  return { client: fresh, via: 'whatsapp', number: proposal.number };
+}
+
+module.exports = { requestBuild, requestDeploy, handleBuildDone, sendQuotation, buildPrompt, KIND_LABEL };

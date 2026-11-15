@@ -245,7 +245,7 @@ router.post('/sarvam/jarvis-lookup', verifySecret, jarvisLookup);
 // ── Jarvis action tools (only for sir's number) ─────────────────────────────────────────────
 const { scheduleGoogleMeet } = require('../services/googleCalendar');
 const { sendMeetingMessage } = require('../services/whatsapp');
-const { requestBuild, handleBuildDone } = require('../services/claudeBuild');
+const { requestBuild, requestDeploy, handleBuildDone, sendQuotation } = require('../services/claudeBuild');
 const { addClient } = require('../services/clientsService');
 const waLinked = require('../services/waLinked');
 const { istParts, istDate } = require('../lib/time');
@@ -306,7 +306,7 @@ function nameSimilarity(a, b) {
 /** The project sir most likely means when he doesn't name one: the only one in progress. */
 async function onlyActiveProject() {
   const active = await prisma.client.findMany({
-    where: { OR: [{ website_stage: { in: ['PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW'] } }, { build_status: { in: ['requested', 'running'] } }] },
+    where: { OR: [{ website_stage: { in: ['PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW', 'READY'] } }, { build_status: { in: ['requested', 'running', 'deploying'] } }] },
     orderBy: { updated_at: 'desc' }, take: 2,
   });
   return active.length === 1 ? active[0] : null;
@@ -409,6 +409,18 @@ async function jarvisBuild(req, res) {
     ? await findClient(wanted).catch(() => null)
     : await onlyActiveProject().catch(() => null);
   if (!client && !wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
+  // build_project doubles as deploy / send-quotation, so no new tools are needed in the Sarvam editor.
+  const intent = `${src.kind || ''} ${src.action || ''} ${src.instructions || ''}`.toLowerCase();
+  const isBuild = /\b(build|rebuild|redo|create|make (a|the|it)|website for|app for|change|update|fix)\b/.test(intent);
+  const wantsDeploy = !isBuild && /\b(deploy|publish|go live|make it live|put it live|live link|host)\b/.test(intent);
+  const wantsQuote = !isBuild && /\b(quotation|quote|proposal)\b/.test(intent);
+  if ((wantsDeploy || wantsQuote) && !client) return res.json({ answer: `I couldn't find a client called ${wanted}, sir. Which one do you mean?` });
+  if (wantsDeploy) return deployFor(client, res);
+  if (wantsQuote) return quotationFor(client, src, res);
+  if (['requested', 'running', 'deploying'].includes(client?.build_status)
+    && client.build_requested_at && Date.now() - client.build_requested_at.getTime() < 45 * 60000) {
+    return res.json({ answer: `${client.business_name} is already ${client.build_status === 'deploying' ? 'deploying' : 'being built'}, sir — I'll call you the moment it's done.` });
+  }
   let added = '';
   if (!client) {
     // New project — add it as a client first, with what sir described as the requirements.
@@ -432,7 +444,55 @@ async function jarvisBuild(req, res) {
       } catch { /* ignore */ }
     });
   const label = { website: 'website', app: 'web app', mobile: 'mobile app' }[kind];
-  return res.json({ answer: `Done, sir — ${added}Claude has started building the ${label} for ${client.business_name}. When it's ready it goes live on a preview link automatically, I'll WhatsApp you the link and call you.` });
+  return res.json({ answer: `Done, sir — ${added}Claude has started building the ${label} for ${client.business_name}. I'll call you when it's built, then just say "deploy it" to put it live.` });
+}
+
+async function deployFor(client, res) {
+  try {
+    await requestDeploy(client.id, { source: 'Jarvis call' });
+    return res.json({ answer: `Deploying ${client.business_name} now, sir. In a couple of minutes it'll be on a live link — I'll WhatsApp it to you and give you a call.` });
+  } catch (err) {
+    return res.json({ answer: `I couldn't deploy ${client.business_name}, sir: ${err.message}.` });
+  }
+}
+
+async function quotationFor(client, src, res) {
+  try {
+    const r = await sendQuotation(client.id, { phone: src.phone || src.number, source: 'Jarvis call' });
+    const to = r.client.phone_number;
+    return res.json({
+      answer: r.via === 'asked_email'
+        ? `Done, sir. I've messaged ${client.business_name} on ${to} asking for their email — their portal with the quotation goes out as soon as they reply.`
+        : `Done, sir. The quotation${r.number ? ` ${r.number}` : ''} has gone to ${client.business_name} on WhatsApp, ${to}.`,
+    });
+  } catch (err) {
+    return res.json({ answer: err.status === 400 ? err.message : `I couldn't send the quotation, sir: ${err.message}.` });
+  }
+}
+
+async function clientFromTool(src) {
+  const wanted = String(src.client || src.name || src.business_name || '').trim();
+  return wanted && !/^(-|none|null|my client|the client|it|this|that)$/i.test(wanted)
+    ? findClient(wanted).catch(() => null)
+    : onlyActiveProject().catch(() => null);
+}
+
+// POST /webhook/sarvam/jarvis-deploy { client?, caller }
+async function jarvisDeploy(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can deploy.' });
+  const client = await clientFromTool(src);
+  if (!client) return res.json({ answer: 'Which project should I deploy, sir?' });
+  return deployFor(client, res);
+}
+
+// POST /webhook/sarvam/jarvis-quotation { client?, phone?, caller }
+async function jarvisQuotation(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can send quotations.' });
+  const client = await clientFromTool(src);
+  if (!client) return res.json({ answer: 'Which client should get the quotation, sir?' });
+  return quotationFor(client, src, res);
 }
 
 // POST /webhook/sarvam/jarvis-add-client { business_name, contact_name?, phone?, plan?, requirements?, notes?, caller }
@@ -511,6 +571,8 @@ router.post('/sarvam/jarvis-calendar', verifySecret, jarvisCalendar);
 router.post('/sarvam/jarvis-schedule', verifySecret, jarvisSchedule);
 router.post('/sarvam/jarvis-whatsapp', verifySecret, jarvisWhatsApp);
 router.post('/sarvam/jarvis-build', verifySecret, jarvisBuild);
+router.post('/sarvam/jarvis-deploy', verifySecret, jarvisDeploy);
+router.post('/sarvam/jarvis-quotation', verifySecret, jarvisQuotation);
 
 // POST /webhook/github/build-done — sent by the Claude build workflow when a run ends
 router.post('/github/build-done', verifySecret, async (req, res) => {

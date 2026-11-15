@@ -128,7 +128,12 @@ on:
     inputs:
       prompt:
         description: What Claude should build or change
-        required: true
+        required: false
+        default: '-'
+      mode:
+        description: build (Claude writes the code) or deploy (publish the code to Vercel)
+        required: false
+        default: build
 
 permissions:
   contents: write
@@ -151,6 +156,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Claude builds the project
+        if: inputs.mode != 'deploy'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -159,7 +165,7 @@ jobs:
           claude_args: --max-turns 250 --permission-mode acceptEdits --allowedTools "Bash,Edit,Write,Read,Glob,Grep,WebFetch"
 
       - name: Keep Claude's work log (3 days)
-        if: always()
+        if: always() && inputs.mode != 'deploy'
         uses: actions/upload-artifact@v4
         with:
           name: claude-log
@@ -168,6 +174,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit and push the work
+        if: inputs.mode != 'deploy'
         run: |
           git config user.name "Claude (Infinity Web & Apps)"
           git config user.email "claude-build@users.noreply.github.com"
@@ -185,13 +192,14 @@ jobs:
           if [ "$n" -lt 3 ]; then echo "::error::Claude did not create the project files"; exit 1; fi
 
       - name: Deploy a live preview to Vercel
-        if: env.VERCEL_TOKEN != ''
+        if: inputs.mode == 'deploy'
         run: |
+          if [ -z "$VERCEL_TOKEN" ]; then echo "::error::No Vercel token on the server"; exit 1; fi
           SCOPE=""
           if [ -n "$VERCEL_SCOPE" ]; then SCOPE="--scope $VERCEL_SCOPE"; fi
           URL=$(npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN" $SCOPE 2>vercel.err | tail -n 1)
           cat vercel.err | tail -n 20
-          case "$URL" in https://*) echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"; echo "Live preview: $URL";; *) echo "::warning::Vercel deploy did not return a URL";; esac
+          case "$URL" in https://*) echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"; echo "Live preview: $URL";; *) echo "::error::Vercel deploy failed: $(tail -n 3 vercel.err | tr '\\n' ' ')"; exit 1;; esac
 
       - name: Tell the Infinity dashboard
         if: always()
@@ -202,7 +210,7 @@ jobs:
         run: |
           if [ -n "$CALLBACK_URL" ]; then
             curl -sS -X POST "$CALLBACK_URL" -H 'Content-Type: application/json' \\
-              -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"status\\":\\"$STATUS\\",\\"run_url\\":\\"$RUN_URL\\",\\"preview_url\\":\\"\${PREVIEW_URL:-}\\"}" || true
+              -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"status\\":\\"$STATUS\\",\\"run_url\\":\\"$RUN_URL\\",\\"preview_url\\":\\"\${PREVIEW_URL:-}\\",\\"mode\\":\\"\${{ inputs.mode }}\\"}" || true
           fi
 `;
 
@@ -230,11 +238,11 @@ async function ensureBuildSetup(fullName, { claudeToken, callbackUrl, vercelToke
 }
 
 /** Start the build workflow with a prompt. */
-async function dispatchBuild(fullName, prompt) {
+async function dispatchBuild(fullName, prompt, mode = 'build') {
   const repo = await gh('GET', `/repos/${fullName}`);
   await gh('POST', `/repos/${fullName}/actions/workflows/claude-build.yml/dispatches`, {
     ref: repo.default_branch || 'main',
-    inputs: { prompt: String(prompt).slice(0, 60000) },
+    inputs: { prompt: String(prompt || '-').slice(0, 60000), mode },
   });
   return `${repo.html_url}/actions/workflows/claude-build.yml`;
 }

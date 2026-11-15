@@ -71,6 +71,25 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
     } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
   }
 
+  async function deploy() {
+    setBusy('deploy');
+    try {
+      await api(`/api/clients/${client.id}/deploy`, { method: 'POST' });
+      toast('Deploying to Vercel — you\'ll get the live link on WhatsApp', 'success');
+      onChanged?.();
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+  }
+
+  async function sendQuote() {
+    if (!window.confirm(`Send the quotation to ${client.business_name} (${client.phone_number}) now?`)) return;
+    setBusy('quote');
+    try {
+      const r = await api(`/api/clients/${client.id}/send-quotation`, { method: 'POST' });
+      toast(r.via === 'asked_email' ? 'Asked the client for their email — the portal goes out when they reply' : 'Quotation sent to the client', 'success');
+      onChanged?.();
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+  }
+
   async function repo() {
     setBusy('repo');
     try {
@@ -152,7 +171,9 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
               <p className="text-sm font-medium text-ink">Build with Claude</p>
               <p className="text-xs text-gray-500">
                 {client.build_status === 'running' ? 'Claude is building it now…'
-                  : client.build_status === 'success' ? `Last build finished ${fmtDateTime(client.build_finished_at)}`
+                  : client.build_status === 'deploying' ? 'Deploying to Vercel…'
+                  : client.build_status === 'deployed' ? `Live since ${fmtDateTime(client.build_finished_at)}`
+                  : client.build_status === 'success' ? `Built ${fmtDateTime(client.build_finished_at)} — deploy it to get a live link`
                     : client.build_status === 'failure' ? 'Last build failed — see the run'
                       : 'Claude builds and commits it in this client\'s repo (GitHub Actions)'}
                 {client.build_run_url && <> · <a href={client.build_run_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">runs</a></>}
@@ -167,8 +188,18 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
               <button className="btn-primary btn-sm" disabled={busy === 'build' || client.build_status === 'running'} onClick={build}>
                 {busy === 'build' ? 'Starting…' : client.build_status === 'running' ? 'Building…' : 'Build now'}
               </button>
+              <button className="btn-ghost btn-sm" disabled={busy === 'deploy' || !['success', 'deployed'].includes(client.build_status)} onClick={deploy}
+                title="Publish the built code to a live Vercel preview link">
+                {busy === 'deploy' ? 'Starting…' : client.build_status === 'deploying' ? 'Deploying…' : 'Deploy'}
+              </button>
             </div>
           </div>
+          {client.website_preview_url && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <a href={client.website_preview_url} target="_blank" rel="noreferrer" className="break-all text-blue-400 hover:underline">{client.website_preview_url}</a>
+              <button className="btn-primary btn-sm" disabled={busy === 'quote'} onClick={sendQuote}>{busy === 'quote' ? 'Sending…' : 'Send quotation to client'}</button>
+            </div>
+          )}
           <input className="input mt-2 text-xs" placeholder="Optional instructions, e.g. add a festival offers banner" value={instructions} onChange={(e) => setInstructions(e.target.value)} />
         </div>
         <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs text-gray-400">

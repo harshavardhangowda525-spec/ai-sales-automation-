@@ -8,7 +8,7 @@ const { sendWhatsAppMessage } = require('../services/whatsapp');
 const { requestOwnerCall } = require('../services/ownerCalls');
 const { generateWebsitePrompt } = require('../services/websitePrompt');
 const { createClientRepo } = require('../services/github');
-const { requestBuild } = require('../services/claudeBuild');
+const { requestBuild, requestDeploy, sendQuotation } = require('../services/claudeBuild');
 const { addClient } = require('../services/clientsService');
 const waLinked = require('../services/waLinked');
 const { sendWebsiteReadyMessage } = require('../services/whatsapp');
@@ -174,6 +174,30 @@ router.post('/:id/reschedule', async (req, res, next) => {
     res.json({ ok: true, meet, whatsapp, client: updated });
   } catch (err) {
     await logError(req.params.id, 'RESCHEDULE', err);
+    next(err);
+  }
+});
+
+// POST /api/clients/:id/deploy — publish the built code to a Vercel preview link
+router.post('/:id/deploy', async (req, res, next) => {
+  try {
+    const client = await requestDeploy(req.params.id, { source: 'dashboard' });
+    res.json({ ok: true, client });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    await logError(req.params.id, 'DEPLOY', err);
+    next(err);
+  }
+});
+
+// POST /api/clients/:id/send-quotation { phone? } — sir approves: quotation goes to the client's number
+router.post('/:id/send-quotation', async (req, res, next) => {
+  try {
+    const r = await sendQuotation(req.params.id, { phone: req.body?.phone, source: 'dashboard' });
+    res.json({ ok: true, via: r.via, client: r.client });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    await logError(req.params.id, 'QUOTATION_SEND', err);
     next(err);
   }
 });
