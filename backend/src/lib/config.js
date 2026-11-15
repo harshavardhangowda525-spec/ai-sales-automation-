@@ -64,6 +64,10 @@ const config = {
     templateLang: env('WHATSAPP_TEMPLATE_LANG', 'en'),
   },
 
+  // Claude Code token from the owner's Claude subscription (`claude setup-token`), used by the
+  // claude-code-action workflow in each client repo. Not a pay-per-use API key.
+  claudeCodeToken: env('CLAUDE_CODE_OAUTH_TOKEN'),
+
   // GitHub: one private repo per client website (fine-grained token with Administration + Contents write)
   github: {
     token: env('GITHUB_TOKEN'),
@@ -85,6 +89,7 @@ config.isConfigured = {
   whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId),
   openai: Boolean(config.openai.apiKey),
   github: Boolean(config.github.token),
+  claudeBuilds: Boolean(config.github.token && config.claudeCodeToken),
 };
 
 module.exports = config;

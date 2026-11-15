@@ -166,4 +166,21 @@ async function sendWebsiteReadyMessage(client, websiteUrl) {
   return { mock: false, messageId };
 }
 
-module.exports = { sendWhatsAppMessage, sendWebsiteReadyMessage, buildMessageText, buildWebsiteText };
+/** Meeting invite only (used when Jarvis schedules a meeting on a call). Linked WhatsApp only. */
+async function sendMeetingMessage(client) {
+  const to = toWhatsAppId(client.phone_number);
+  const name = client.contact_name?.split(' ')[0] || 'there';
+  const text = `Hi ${name}! 👋
+
+Your meeting with our founder at *Infinity Web & Apps* is scheduled:
+📅 ${formatMeetingTime(client.meeting_time)}
+🔗 Join here: ${client.meeting_link}
+
+See you there! If the time doesn't work, just reply here. 😊`;
+  if (!(await waLinked.hasSession())) throw new Error('Your WhatsApp is not linked');
+  const id = await waLinked.sendText(to, text);
+  await logAction(client.id, 'WHATSAPP_SENT', `Meeting invite sent from your WhatsApp to +${to}`);
+  return id;
+}
+
+module.exports = { sendWhatsAppMessage, sendWebsiteReadyMessage, sendMeetingMessage, buildMessageText, buildWebsiteText };

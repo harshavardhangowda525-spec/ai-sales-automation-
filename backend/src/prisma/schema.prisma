@@ -91,6 +91,10 @@ model Client {
   website_preview_url String?
   github_repo         String?   // owner/name of the client's private website repo
   github_repo_url     String?
+  build_status        String?   // requested | running | success | failure
+  build_run_url       String?
+  build_requested_at  DateTime? @db.Timestamptz(6)
+  build_finished_at   DateTime? @db.Timestamptz(6)
   created_at        DateTime     @default(now()) @db.Timestamptz(6)
   updated_at        DateTime     @updatedAt @db.Timestamptz(6)
 

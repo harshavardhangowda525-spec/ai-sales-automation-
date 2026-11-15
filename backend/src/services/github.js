@@ -37,13 +37,14 @@ function slugify(name) {
 
 /** Create or update a file in the repo (base64 content, with sha when it already exists). */
 async function putFile(fullName, path, content, message) {
+  const enc = path.split('/').map(encodeURIComponent).join('/'); // keep folder slashes
   let sha;
   try {
-    sha = (await gh('GET', `/repos/${fullName}/contents/${encodeURIComponent(path)}`)).sha;
+    sha = (await gh('GET', `/repos/${fullName}/contents/${enc}`)).sha;
   } catch (err) {
     if (err.status !== 404) throw err;
   }
-  return gh('PUT', `/repos/${fullName}/contents/${encodeURIComponent(path)}`, {
+  return gh('PUT', `/repos/${fullName}/contents/${enc}`, {
     message,
     content: Buffer.from(content, 'utf8').toString('base64'),
     ...(sha ? { sha } : {}),
@@ -117,4 +118,91 @@ async function createClientRepo(clientId) {
   return updated;
 }
 
-module.exports = { createClientRepo, slugify };
+// ── Claude builds via GitHub Actions ───────────────────────────────────────────────────────
+// Anthropic's official claude-code-action, authenticated with the owner's Claude subscription
+// (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`) — no pay-per-use API key.
+const BUILD_WORKFLOW = `name: Claude build
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: What Claude should build or change
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Claude builds the project
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: \${{ secrets.GITHUB_TOKEN }}
+          prompt: \${{ inputs.prompt }}
+          claude_args: --max-turns 250 --allowedTools "Bash,Edit,Write,Read,Glob,Grep,WebFetch"
+
+      - name: Commit and push the work
+        if: always()
+        run: |
+          git config user.name "Claude (Infinity Web & Apps)"
+          git config user.email "claude-build@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "Nothing new to commit"; else git commit -m "Claude build #\${{ github.run_number }}" && git push; fi
+
+      - name: Tell the Infinity dashboard
+        if: always()
+        env:
+          CALLBACK_URL: \${{ secrets.INFINITY_CALLBACK_URL }}
+          STATUS: \${{ job.status }}
+          RUN_URL: \${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}
+        run: |
+          if [ -n "$CALLBACK_URL" ]; then
+            curl -sS -X POST "$CALLBACK_URL" -H 'Content-Type: application/json' \\
+              -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"status\\":\\"$STATUS\\",\\"run_url\\":\\"$RUN_URL\\"}" || true
+          fi
+`;
+
+/** Encrypt and store an Actions secret on the repo (GitHub requires a libsodium sealed box). */
+async function setRepoSecret(fullName, name, value) {
+  const sodium = require('libsodium-wrappers');
+  await sodium.ready;
+  const { key, key_id: keyId } = await gh('GET', `/repos/${fullName}/actions/secrets/public-key`);
+  const sealed = sodium.crypto_box_seal(sodium.from_string(value), sodium.from_base64(key, sodium.base64_variants.ORIGINAL));
+  await gh('PUT', `/repos/${fullName}/actions/secrets/${name}`, {
+    encrypted_value: sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL),
+    key_id: keyId,
+  });
+}
+
+/** Make sure the repo has the build workflow and its two secrets. */
+async function ensureBuildSetup(fullName, { claudeToken, callbackUrl }) {
+  await putFile(fullName, '.github/workflows/claude-build.yml', BUILD_WORKFLOW, 'Add Claude build workflow');
+  await setRepoSecret(fullName, 'CLAUDE_CODE_OAUTH_TOKEN', claudeToken);
+  await setRepoSecret(fullName, 'INFINITY_CALLBACK_URL', callbackUrl);
+}
+
+/** Start the build workflow with a prompt. */
+async function dispatchBuild(fullName, prompt) {
+  const repo = await gh('GET', `/repos/${fullName}`);
+  await gh('POST', `/repos/${fullName}/actions/workflows/claude-build.yml/dispatches`, {
+    ref: repo.default_branch || 'main',
+    inputs: { prompt: String(prompt).slice(0, 60000) },
+  });
+  return `${repo.html_url}/actions/workflows/claude-build.yml`;
+}
+
+module.exports = { createClientRepo, slugify, putFile, ensureBuildSetup, dispatchBuild, setRepoSecret, BUILD_WORKFLOW };

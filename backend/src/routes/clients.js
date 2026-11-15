@@ -8,6 +8,7 @@ const { sendWhatsAppMessage } = require('../services/whatsapp');
 const { requestOwnerCall } = require('../services/ownerCalls');
 const { generateWebsitePrompt } = require('../services/websitePrompt');
 const { createClientRepo } = require('../services/github');
+const { requestBuild } = require('../services/claudeBuild');
 const waLinked = require('../services/waLinked');
 const { sendWebsiteReadyMessage } = require('../services/whatsapp');
 const STAGES = ['NOT_STARTED', 'PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW', 'READY', 'DELIVERED'];
@@ -157,6 +158,26 @@ router.post('/:id/reschedule', async (req, res, next) => {
   } catch (err) {
     await logError(req.params.id, 'RESCHEDULE', err);
     next(err);
+  }
+});
+
+// POST /api/clients/:id/claude-build { kind?: website|app, instructions? } — Claude builds it in GitHub Actions
+router.post('/:id/claude-build', async (req, res, next) => {
+  try {
+    const exists = await prisma.client.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!exists) return res.status(404).json({ error: 'Client not found' });
+    const client = await requestBuild(req.params.id, {
+      kind: req.body?.kind === 'app' ? 'app' : 'website',
+      instructions: req.body?.instructions?.trim() || null,
+      source: 'dashboard',
+    });
+    res.json({ ok: true, client });
+  } catch (err) {
+    await logError(req.params.id, 'CLAUDE_BUILD', err);
+    const msg = [401, 403].includes(err.status)
+      ? `GitHub refused (${err.status}) — the token needs Actions, Secrets and Workflows write access`
+      : err.message;
+    res.status(err.status === 400 ? 400 : 502).json({ error: msg });
   }
 });
 

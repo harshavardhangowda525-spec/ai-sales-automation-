@@ -217,7 +217,162 @@ async function jarvisLookup(req, res) {
 router.get('/sarvam/jarvis-lookup', verifySecret, jarvisLookup);
 router.post('/sarvam/jarvis-lookup', verifySecret, jarvisLookup);
 
+// ── Jarvis action tools (only for sir's number) ─────────────────────────────────────────────
+const { scheduleGoogleMeet } = require('../services/googleCalendar');
+const { sendMeetingMessage } = require('../services/whatsapp');
+const { requestBuild, handleBuildDone } = require('../services/claudeBuild');
+const waLinked = require('../services/waLinked');
+const { istParts, istDate } = require('../lib/time');
+
+function toolInput(req) {
+  const src = { ...(req.query || {}), ...(req.body || {}) };
+  const raw = src.caller || src.user_phone_number || src.caller_phone_number || src.phone_number || '';
+  const caller = raw ? toE164(String(raw)) : null;
+  const owner = config.ownerPhone ? toE164(config.ownerPhone) : null;
+  return { src, isOwner: Boolean(caller && owner && caller === owner) };
+}
+
+async function findClient(name) {
+  const q = String(name || '').trim();
+  if (!q) return null;
+  const words = q.split(/\s+/).filter((w) => w.length > 2);
+  return prisma.client.findFirst({
+    where: {
+      OR: [
+        { business_name: { contains: q, mode: 'insensitive' } },
+        { contact_name: { contains: q, mode: 'insensitive' } },
+        ...words.map((w) => ({ business_name: { contains: w, mode: 'insensitive' } })),
+      ],
+    },
+    orderBy: { updated_at: 'desc' },
+  });
+}
+
+/** Parse "2026-11-16T16:00", "tomorrow 4pm", "monday 11:30 am", "today 6 pm" into a Date (IST). */
+function parseWhen(text, now = new Date()) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return null;
+  const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})[t ](\d{1,2}):(\d{2})/);
+  if (iso) return istDate(+iso[1], +iso[2] - 1, +iso[3], +iso[4], +iso[5]);
+  const p = istParts(now);
+  let dayOffset = null;
+  if (/\btoday\b|\btonight\b/.test(t)) dayOffset = 0;
+  else if (/\btomorrow\b/.test(t)) dayOffset = 1;
+  else if (/day after tomorrow/.test(t)) dayOffset = 2;
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dn = days.findIndex((d) => t.includes(d));
+  if (dayOffset === null && dn >= 0) dayOffset = ((dn - p.weekday + 7) % 7) || 7;
+  const dm = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/);
+  const tm = t.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\b(?!\s*(?:st|nd|rd|th|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))/g);
+  let hour = null; let minute = 0;
+  for (const m of tm || []) {
+    const mm = m.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?/);
+    let h = +mm[1];
+    if (mm[3] === 'pm' && h < 12) h += 12;
+    if (mm[3] === 'am' && h === 12) h = 0;
+    if (!mm[3] && !mm[2] && h <= 7) h += 12; // "at 4" → 4 PM
+    if (h >= 0 && h <= 23) { hour = h; minute = +(mm[2] || 0); }
+  }
+  if (hour === null) hour = /evening/.test(t) ? 18 : /afternoon/.test(t) ? 15 : /morning/.test(t) ? 10 : null;
+  if (hour === null) return null;
+  if (dm) {
+    const mon = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(dm[2]);
+    let d = istDate(p.year, mon, +dm[1], hour, minute);
+    if (d < now) d = istDate(p.year + 1, mon, +dm[1], hour, minute);
+    return d;
+  }
+  if (dayOffset === null) dayOffset = 0;
+  let d = istDate(p.year, p.month, p.day + dayOffset, hour, minute);
+  if (d < now && dayOffset === 0) d = istDate(p.year, p.month, p.day + 1, hour, minute);
+  return d;
+}
+
+// POST /webhook/sarvam/jarvis-schedule { client, when, notify?, caller }
+async function jarvisSchedule(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can schedule meetings.' });
+  try {
+    const client = await findClient(src.client || src.name);
+    if (!client) return res.json({ answer: `I couldn't find a client called "${src.client || src.name}" in the dashboard, sir.` });
+    const when = parseWhen(src.when || src.time || src.datetime);
+    if (!when) return res.json({ answer: 'What day and time should I book it for, sir?' });
+    if (when.getTime() < Date.now()) return res.json({ answer: 'That time has already passed, sir. Which time should I use?' });
+    const meet = await scheduleGoogleMeet(client, {}, { startTime: when });
+    const fresh = await prisma.client.findUnique({ where: { id: client.id } });
+    let told = '';
+    const notify = !['false', 'no', '0'].includes(String(src.notify ?? 'true').toLowerCase());
+    if (notify) {
+      try {
+        await sendMeetingMessage(fresh);
+        told = ` I've sent ${fresh.contact_name || fresh.business_name} the invite on WhatsApp.`;
+      } catch (err) {
+        told = ` I couldn't WhatsApp them (${err.message}).`;
+      }
+    }
+    await logAction(client.id, 'JARVIS_SCHEDULED', `Booked by voice for ${formatMeetingTime(meet.scheduledTime)}`);
+    return res.json({ answer: `Done, sir. ${fresh.business_name} is booked for ${formatMeetingTime(meet.scheduledTime)} with a Google Meet link, and it's on your calendar.${told}` });
+  } catch (err) {
+    await logError(null, 'JARVIS_SCHEDULE', err);
+    return res.json({ answer: `I couldn't book that, sir: ${err.message}` });
+  }
+}
+
+// POST /webhook/sarvam/jarvis-whatsapp { client, message, caller }
+async function jarvisWhatsApp(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can send messages.' });
+  try {
+    const client = await findClient(src.client || src.name);
+    if (!client) return res.json({ answer: `I couldn't find a client called "${src.client || src.name}", sir.` });
+    const message = String(src.message || '').trim();
+    if (!message) return res.json({ answer: 'What should the message say, sir?' });
+    if (!(await waLinked.hasSession())) return res.json({ answer: 'Your WhatsApp isn\'t linked right now, sir — please link it on the WhatsApp page.' });
+    await waLinked.sendText(client.phone_number, message);
+    await logAction(client.id, 'WHATSAPP_SENT', `Sent by voice from your WhatsApp: "${message.slice(0, 300)}"`);
+    return res.json({ answer: `Sent to ${client.contact_name || client.business_name} on WhatsApp, sir.` });
+  } catch (err) {
+    await logError(null, 'JARVIS_WHATSAPP', err);
+    return res.json({ answer: `I couldn't send it, sir: ${err.message}` });
+  }
+}
+
+// POST /webhook/sarvam/jarvis-build { client, kind: website|app, instructions?, caller }
+async function jarvisBuild(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can start builds.' });
+  const client = await findClient(src.client || src.name).catch(() => null);
+  if (!client) return res.json({ answer: `I couldn't find a client called "${src.client || src.name}", sir.` });
+  if (!config.isConfigured.claudeBuilds) {
+    return res.json({ answer: 'Claude builds aren\'t connected yet, sir — the Claude token or GitHub token is missing on the server.' });
+  }
+  const kind = /app/i.test(String(src.kind || '')) ? 'app' : 'website';
+  // Setup takes a little while; answer now and report on WhatsApp.
+  requestBuild(client.id, { kind, instructions: src.instructions || null, source: 'Jarvis call' })
+    .catch(async (err) => {
+      await logError(client.id, 'CLAUDE_BUILD', err);
+      try {
+        if (await waLinked.hasSession()) await waLinked.sendText(config.ownerPhone, `⚠️ Sir, I couldn't start the build for ${client.business_name}: ${err.message}`);
+      } catch { /* ignore */ }
+    });
+  return res.json({ answer: `On it, sir. Claude is starting the ${kind} for ${client.business_name} now — I'll WhatsApp you when it's built.` });
+}
+
+router.post('/sarvam/jarvis-schedule', verifySecret, jarvisSchedule);
+router.post('/sarvam/jarvis-whatsapp', verifySecret, jarvisWhatsApp);
+router.post('/sarvam/jarvis-build', verifySecret, jarvisBuild);
+
+// POST /webhook/github/build-done — sent by the Claude build workflow when a run ends
+router.post('/github/build-done', verifySecret, async (req, res) => {
+  try {
+    res.json(await handleBuildDone(req.body || {}));
+  } catch (err) {
+    await logError(null, 'BUILD_CALLBACK', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/sarvam/jarvis-context', verifySecret, jarvisContext);
 router.post('/sarvam/jarvis-context', verifySecret, jarvisContext);
 
 module.exports = router;
+module.exports.parseWhen = parseWhen;

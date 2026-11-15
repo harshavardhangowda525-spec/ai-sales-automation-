@@ -58,6 +58,18 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
   }
 
   const fileName = 'CLAUDE.md';
+  const [kind, setKind] = useState('website');
+  const [instructions, setInstructions] = useState('');
+
+  async function build() {
+    setBusy('build');
+    try {
+      await api(`/api/clients/${client.id}/claude-build`, { method: 'POST', body: { kind, instructions } });
+      toast('Claude has started building — you\'ll get a WhatsApp when it\'s done', 'success');
+      setInstructions('');
+      onChanged?.();
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+  }
 
   async function repo() {
     setBusy('repo');
@@ -133,6 +145,30 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
           <button className="btn-ghost btn-sm" disabled={busy === 'repo' || !client.website_prompt} onClick={repo}>
             {busy === 'repo' ? 'Working…' : client.github_repo ? 'Update CLAUDE.md in repo' : 'Create GitHub repo'}
           </button>
+        </div>
+        <div className="mt-3 rounded-lg bg-navy p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-ink">Build with Claude</p>
+              <p className="text-xs text-gray-500">
+                {client.build_status === 'running' ? 'Claude is building it now…'
+                  : client.build_status === 'success' ? `Last build finished ${fmtDateTime(client.build_finished_at)}`
+                    : client.build_status === 'failure' ? 'Last build failed — see the run'
+                      : 'Claude builds and commits it in this client\'s repo (GitHub Actions)'}
+                {client.build_run_url && <> · <a href={client.build_run_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">runs</a></>}
+              </p>
+            </div>
+            <div className="flex gap-1.5">
+              <select className="input w-auto py-1 text-xs" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Build type">
+                <option value="website">Website</option>
+                <option value="app">Web app</option>
+              </select>
+              <button className="btn-primary btn-sm" disabled={busy === 'build' || client.build_status === 'running'} onClick={build}>
+                {busy === 'build' ? 'Starting…' : client.build_status === 'running' ? 'Building…' : 'Build now'}
+              </button>
+            </div>
+          </div>
+          <input className="input mt-2 text-xs" placeholder="Optional instructions, e.g. add a festival offers banner" value={instructions} onChange={(e) => setInstructions(e.target.value)} />
         </div>
         <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs text-gray-400">
           <li>{client.github_repo ? 'Repo is ready with CLAUDE.md.' : 'Create the repo (it gets this CLAUDE.md and a README).'}</li>

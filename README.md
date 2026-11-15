@@ -122,6 +122,20 @@ Setup: create a GitHub fine-grained token (All repositories → Administration: 
 
 Stages on the client page: **Brief ready → In development** (set automatically when the repo is created) **→ In review → Ready → Delivered**. Clicking **Ready** asks for the live link and queues the website-ready approval call; once you approve, the client gets the link on WhatsApp.
 
+### Claude builds (hands-off)
+
+**Build now** on a client page, or telling Jarvis "build the GreenLeaf website", starts Anthropic's official `claude-code-action` in that client's repo. It runs through GitHub Actions on your **Claude subscription** (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`), not an API key. The server makes sure the repo, the brief, `.github/workflows/claude-build.yml` and the repo secrets all exist, then starts the run. Claude writes `PLAN.md`, builds and commits. When it finishes, the workflow reports back: the stage moves to **In review** and you get a WhatsApp with the repo and run links. The GitHub token needs **Actions**, **Secrets** and **Workflows** (Read & write) in addition to Administration and Contents.
+
+### Jarvis action tools (Sarvam API tools, sir's number only)
+
+| Tool | Endpoint (`?secret=<SARVAM_WEBHOOK_SECRET>`) | Body |
+|---|---|---|
+| `schedule_meeting` | `POST /webhook/sarvam/jarvis-schedule` | `{ client, when, notify?, caller }`, where `when` is like "tomorrow 4pm" or `2026-11-18T15:00`. Books Google Meet and Calendar, and WhatsApps the client the invite |
+| `send_whatsapp` | `POST /webhook/sarvam/jarvis-whatsapp` | `{ client, message, caller }`. Sends from your linked WhatsApp |
+| `build_project` | `POST /webhook/sarvam/jarvis-build` | `{ client, kind: website|app, instructions?, caller }`. Starts a Claude build |
+
+Each returns `answer`, which is what Jarvis says back.
+
 ### Jarvis dashboard lookup (Sarvam API tool)
 
 Add an API tool named `lookup_dashboard` to the Jarvis agent so he can fetch anything mid-call:
