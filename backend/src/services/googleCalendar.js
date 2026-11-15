@@ -244,4 +244,21 @@ async function listUpcomingSchedule({ days = 7 } = {}) {
   return items.sort((a, b) => a.start - b.start);
 }
 
-module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule };
+/** Plain calendar entry for sir (no Meet link, nobody invited). */
+async function addCalendarEvent({ title, start, minutes = 30, description }) {
+  if (!config.isConfigured.google) throw new Error('Google Calendar is not connected');
+  const end = new Date(start.getTime() + minutes * 60000);
+  const { data } = await calendarApi().events.insert({
+    calendarId: config.google.calendarId,
+    requestBody: {
+      summary: title,
+      description: description || 'Added by Jarvis',
+      start: { dateTime: toISTISOString(start), timeZone: TZ },
+      end: { dateTime: toISTISOString(end), timeZone: TZ },
+      reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 15 }] },
+    },
+  });
+  return data;
+}
+
+module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule, addCalendarEvent };

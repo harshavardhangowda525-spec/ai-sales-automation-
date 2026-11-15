@@ -415,6 +415,32 @@ async function jarvisAddClient(req, res) {
   }
 }
 router.post('/sarvam/jarvis-add-client', verifySecret, jarvisAddClient);
+
+// POST /webhook/sarvam/jarvis-calendar { title, when, minutes?, client?, caller } — plain calendar entry for sir
+async function jarvisCalendar(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can add calendar events.' });
+  try {
+    const when = parseWhen(src.when || src.time || src.datetime);
+    if (!when) return res.json({ answer: 'What day and time should I put it at, sir?' });
+    if (when.getTime() < Date.now() - 5 * 60000) return res.json({ answer: 'That time has already passed, sir. Which time should I use?' });
+    const client = src.client ? await findClient(src.client).catch(() => null) : null;
+    const title = String(src.title || '').trim()
+      || (client ? `Meeting: ${client.business_name}${client.contact_name ? ` (${client.contact_name})` : ''}` : 'Meeting');
+    const minutes = Math.min(Math.max(Number(src.minutes) || 30, 5), 480);
+    const { googleCalendar } = { googleCalendar: require('../services/googleCalendar') };
+    await googleCalendar.addCalendarEvent({
+      title, start: when, minutes,
+      description: client ? `Client: ${client.business_name}${client.contact_name ? `, ${client.contact_name}` : ''}, ${client.phone_number}` : 'Added by Jarvis',
+    });
+    await logAction(client?.id || null, 'CALENDAR_EVENT_ADDED', `"${title}" at ${formatMeetingTime(when)} (added by Jarvis)`);
+    return res.json({ answer: `Done, sir — "${title}" is on your calendar for ${formatMeetingTime(when)}.` });
+  } catch (err) {
+    await logError(null, 'JARVIS_CALENDAR', err);
+    return res.json({ answer: `I couldn't add it to your calendar, sir: ${err.message}` });
+  }
+}
+router.post('/sarvam/jarvis-calendar', verifySecret, jarvisCalendar);
 router.post('/sarvam/jarvis-schedule', verifySecret, jarvisSchedule);
 router.post('/sarvam/jarvis-whatsapp', verifySecret, jarvisWhatsApp);
 router.post('/sarvam/jarvis-build', verifySecret, jarvisBuild);
