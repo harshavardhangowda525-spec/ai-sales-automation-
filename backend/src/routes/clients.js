@@ -89,8 +89,13 @@ router.get('/:id', async (req, res, next) => {
 // PATCH /api/clients/:id — update notes / portal status / plan / contact name
 router.patch('/:id', async (req, res, next) => {
   try {
-    const { notes, portal_status, plan_interest, contact_name, website_stage, website_preview_url } = req.body;
+    const { notes, portal_status, plan_interest, contact_name, website_stage, website_preview_url, email } = req.body;
     const data = {};
+    if (email !== undefined) {
+      const e = String(email || '').trim().toLowerCase();
+      if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return res.status(400).json({ error: 'That email address looks wrong' });
+      data.email = e || null;
+    }
     if (website_stage !== undefined) {
       if (!STAGES.includes(website_stage)) return res.status(400).json({ error: 'invalid website_stage' });
       data.website_stage = website_stage;
@@ -190,6 +195,26 @@ router.post('/:id/claude-build', async (req, res, next) => {
       ? `GitHub refused (${err.status}) — the token needs Actions, Secrets and Workflows write access`
       : err.message;
     res.status(err.status === 400 ? 400 : 502).json({ error: msg });
+  }
+});
+
+// POST /api/clients/:id/portal-sync — create/publish the proposal in the Client Portal and WhatsApp the links
+// (asks the client for their email first if it isn't known yet).
+router.post('/:id/portal-sync', async (req, res, next) => {
+  try {
+    const clientPortal = require('../services/clientPortal');
+    if (!clientPortal.isConfigured()) return res.status(400).json({ error: 'Client Portal is not connected yet (CLIENT_PORTAL_URL / SALES_INTEGRATION_SECRET)' });
+    const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    const r = await clientPortal.deliverApprovedQuotation(client);
+    await prisma.ownerCall.updateMany({
+      where: { client_id: client.id, type: 'QUOTATION', status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } },
+      data: { status: 'SENT', decided_at: new Date(), decision_note: r.status === 'asked_email' ? 'Asked the client for their email' : 'Sent to the Client Portal' },
+    });
+    res.json({ ok: true, ...r, client: await prisma.client.findUnique({ where: { id: client.id } }) });
+  } catch (err) {
+    await logError(req.params.id, 'PORTAL_SYNC', err);
+    res.status(502).json({ error: err.message });
   }
 });
 

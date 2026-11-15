@@ -21,6 +21,47 @@ function Field({ label, children }) {
   );
 }
 
+function ClientPortalCard({ c, onChanged }) {
+  const toast = useToast();
+  const [email, setEmail] = useState(c.email || '');
+  const [busy, setBusy] = useState('');
+  useEffect(() => setEmail(c.email || ''), [c.email]);
+  async function saveEmail() {
+    setBusy('email');
+    try { await api(`/api/clients/${c.id}`, { method: 'PATCH', body: { email } }); toast('Email saved', 'success'); onChanged(); }
+    catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+  }
+  async function sync() {
+    setBusy('sync');
+    try {
+      const r = await api(`/api/clients/${c.id}/portal-sync`, { method: 'POST' });
+      toast(r.status === 'asked_email' ? 'Asked the client for their email on WhatsApp' : 'Proposal published in the Client Portal and links sent on WhatsApp', 'success');
+      onChanged();
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+  }
+  return (
+    <div className="card p-5">
+      <h2 className="mb-3 text-base">Client Portal</h2>
+      <label className="label" htmlFor="cemail">Client email</label>
+      <div className="mt-1.5 flex gap-2">
+        <input id="cemail" type="email" className="input" placeholder="client@business.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <button className="btn-ghost" disabled={busy === 'email' || email === (c.email || '')} onClick={saveEmail}>Save</button>
+      </div>
+      {c.awaiting_email && <p className="mt-2 text-xs text-amber-300">Waiting for the client to reply with their email on WhatsApp…</p>}
+      {c.portal_proposal_link ? (
+        <div className="mt-3 space-y-1 text-sm">
+          <a href={c.portal_proposal_link} target="_blank" rel="noreferrer" className="block break-all text-blue-400 hover:underline">Proposal in the portal ↗</a>
+          {c.portal_invite_link && <p className="break-all text-xs text-gray-500">Invite: {c.portal_invite_link}</p>}
+          <p className="text-xs text-gray-500">Synced {fmtDateTime(c.portal_synced_at)}</p>
+        </div>
+      ) : <p className="mt-3 text-xs text-gray-500">Not in the portal yet. It's created when you approve the quotation.</p>}
+      <button className="btn-primary btn-sm mt-3" disabled={busy === 'sync'} onClick={sync}>
+        {busy === 'sync' ? 'Working…' : c.portal_proposal_link ? 'Send a fresh portal proposal' : c.email ? 'Send to Client Portal' : 'Ask for email & send to portal'}
+      </button>
+    </div>
+  );
+}
+
 export default function ClientDetail() {
   const { id } = useParams();
   const toast = useToast();
@@ -187,6 +228,7 @@ export default function ClientDetail() {
               <p className="mt-2 text-xs">{c.website_sent ? '✓ Link sent to client on WhatsApp' : 'Waiting for your approval'}</p>
             </div>
           )}
+          <ClientPortalCard c={c} onChanged={reload} />
           <div className="card p-5">
             <h2 className="mb-4 flex items-center gap-2 text-base"><Icon name="video" className="h-4 w-4 text-blue-400" /> Consultation</h2>
             <p className="text-lg font-semibold text-ink">{fmtMeeting(c.meeting_time)}</p>

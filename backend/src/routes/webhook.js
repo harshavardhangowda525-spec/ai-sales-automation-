@@ -400,7 +400,7 @@ async function jarvisAddClient(req, res) {
     const name = src.business_name || src.client || src.name;
     if (!name) return res.json({ answer: "What's the business name, sir?" });
     const { client, created } = await addClient({
-      business_name: name, contact_name: src.contact_name, phone: src.phone || src.phone_number_client || src.number,
+      business_name: name, contact_name: src.contact_name, phone: src.phone || src.phone_number_client || src.number, email: src.email,
       plan: src.plan, requirements: src.requirements, notes: src.notes,
     }, 'Jarvis call');
     const noPhone = client.phone_number === '-' ? " I don't have their phone number yet — tell me if you want me to add it." : '';

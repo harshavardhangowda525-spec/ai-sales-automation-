@@ -94,6 +94,21 @@ async function connect() {
     });
     state.sock = sock;
     sock.ev.on('creds.update', saveCreds);
+    // Incoming messages: only used to catch clients replying with their email for the portal.
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const m of messages || []) {
+        try {
+          if (m.key?.fromMe || !m.key?.remoteJid?.endsWith('@s.whatsapp.net')) continue;
+          const text = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+          if (!text) continue;
+          const from = m.key.remoteJid.split('@')[0];
+          await require('./clientPortal').handleIncomingMessage(from, text);
+        } catch (err) {
+          logError(null, 'WHATSAPP_INCOMING', err).catch(() => {});
+        }
+      }
+    });
     sock.ev.on('connection.update', async (u) => {
       if (u.qr) {
         state.qr = u.qr;

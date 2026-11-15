@@ -313,7 +313,14 @@ async function executeApproved(callId) {
   const call = await prisma.ownerCall.findUnique({ where: { id: callId } });
   const client = call.client_id ? await prisma.client.findUnique({ where: { id: call.client_id } }) : null;
   try {
-    if (call.type === 'QUOTATION') {
+    if (call.type === 'QUOTATION' && require('./clientPortal').isConfigured()) {
+      // Proposal lives in the Client Portal; ask for the email first if we don't have it.
+      const r = await require('./clientPortal').deliverApprovedQuotation(client);
+      if (r.status === 'asked_email') {
+        await prisma.ownerCall.update({ where: { id: call.id }, data: { status: 'SENT', decision_note: 'Asked the client for their email — the portal link goes out when they reply' } });
+        return { ok: true, waitingForEmail: true };
+      }
+    } else if (call.type === 'QUOTATION') {
       if (!client.proposal_url) throw new Error('No proposal generated for this client');
       const latest = await prisma.proposal.findFirst({ where: { client_id: client.id }, orderBy: { created_at: 'desc' } });
       await sendWhatsAppMessage(client, client.proposal_url, client.meeting_link, client.meeting_time, { proposalNumber: latest?.number });

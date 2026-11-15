@@ -20,7 +20,8 @@ function normalizePhone(raw) {
  * Create a client, or update the existing one with the same phone number.
  * @returns {{ client, created: boolean }}
  */
-async function addClient({ business_name, contact_name, phone, plan, requirements, notes }, source = 'Jarvis') {
+async function addClient({ business_name, contact_name, phone, plan, requirements, notes, email }, source = 'Jarvis') {
+  const mail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email || '').trim()) ? String(email).trim().toLowerCase() : null;
   const name = String(business_name || '').trim();
   if (!name) throw Object.assign(new Error('business name is required'), { status: 400 });
   const phoneE164 = normalizePhone(phone);
@@ -32,6 +33,7 @@ async function addClient({ business_name, contact_name, phone, plan, requirement
         where: { id: existing.id },
         data: {
           ...(contact_name && !existing.contact_name ? { contact_name } : {}),
+          ...(mail ? { email: mail } : {}),
           ...(plan && normalizePlan(plan) !== 'UNKNOWN' ? { plan_interest: normalizePlan(plan) } : {}),
           ...(requirements ? { requirements: [existing.requirements, requirements].filter(Boolean).join('\n') } : {}),
           ...(notes ? { notes: [existing.notes, notes].filter(Boolean).join('\n') } : {}),
@@ -46,6 +48,7 @@ async function addClient({ business_name, contact_name, phone, plan, requirement
     data: {
       business_name: name,
       contact_name: contact_name?.trim() || null,
+      email: mail,
       phone_number: phoneE164 || '-',
       call_outcome: 'MANUAL',
       plan_interest: normalizePlan(plan),

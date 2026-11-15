@@ -32,6 +32,8 @@ const config = {
   meetingRoomUrl: env('MEETING_ROOM_URL'),
   // Link clients use to review their project (your client portal). Used in "website ready to review" messages.
   clientPortalUrl: env('CLIENT_PORTAL_URL'),
+  // Shared secret for the Client Portal's /api/integrations/sales-lead endpoint
+  portalIntegrationSecret: env('SALES_INTEGRATION_SECRET'),
   // When a lead is interested, WhatsApp them right away (from the linked WhatsApp) so they can
   // call/message the founder directly — no call transfer.
   founderName: env('FOUNDER_NAME', 'Harshavardhan'),
@@ -96,6 +98,7 @@ config.isConfigured = {
   openai: Boolean(config.openai.apiKey),
   github: Boolean(config.github.token),
   claudeBuilds: Boolean(config.github.token && config.claudeCodeToken),
+  clientPortal: Boolean(config.clientPortalUrl && config.portalIntegrationSecret),
 };
 
 module.exports = config;

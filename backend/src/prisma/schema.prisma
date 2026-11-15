@@ -70,6 +70,7 @@ model Client {
   business_name     String
   phone_number      String
   contact_name      String?
+  email             String?
   call_outcome      CallOutcome
   plan_interest     PlanInterest @default(UNKNOWN)
   requirements      String?      @db.Text
@@ -96,6 +97,13 @@ model Client {
   build_run_url       String?
   build_requested_at  DateTime? @db.Timestamptz(6)
   build_finished_at   DateTime? @db.Timestamptz(6)
+  // Client Portal (client-portal-delta-liart.vercel.app) integration
+  awaiting_email        Boolean   @default(false) // asked on WhatsApp for their email, waiting for the reply
+  portal_client_id      String?
+  portal_proposal_id    String?
+  portal_proposal_link  String?
+  portal_invite_link    String?
+  portal_synced_at      DateTime? @db.Timestamptz(6)
   created_at        DateTime     @default(now()) @db.Timestamptz(6)
   updated_at        DateTime     @updatedAt @db.Timestamptz(6)
 
