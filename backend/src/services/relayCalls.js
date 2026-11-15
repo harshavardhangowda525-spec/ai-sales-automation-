@@ -89,6 +89,25 @@ async function activeRelayFor(phoneE164) {
   return relay ? relayVariables(relay, relay.contact) : null;
 }
 
+function pronoun(name) {
+  const n = String(name || '').toLowerCase();
+  const female = [...RELATIONS.mom, ...RELATIONS.wife, ...RELATIONS.sister];
+  const male = [...RELATIONS.dad, ...RELATIONS.brother];
+  return female.includes(n) ? 'her' : male.includes(n) ? 'him' : 'them';
+}
+
+/** What Jarvis says when he calls sir back after a relay call. */
+function relaySpokenUpdate(relay, connected, theySaid, connectivity) {
+  const who = relay.to_name;
+  if (!connected) return `I tried calling ${who} to say "${relay.message}", but ${pronoun(who) === 'them' ? 'they' : pronoun(who) === 'her' ? 'she' : 'he'} didn't pick up. Should I try again?`;
+  // Drop bare greetings/fillers so only what they actually said is read out.
+  const parts = String(theySaid || '').split(' / ').map((x) => x.trim())
+    .filter((x) => x && !/^(hello|hi|hmm+|ok(ay)?|haan|ha|yes|ji|namaskara|namaste)[.!?]*$/i.test(x)).map((x) => x.replace(/[.!?]+$/, ''));
+  return parts.length
+    ? `I called ${who} and told ${pronoun(who)}: "${relay.message}". ${who} said: ${parts.join('. ')}.`
+    : `I called ${who} and told ${pronoun(who)}: "${relay.message}". ${who} just acknowledged it and didn't say anything else.`;
+}
+
 function summarizeTranscript(body) {
   const t = body.interaction_transcript;
   if (Array.isArray(t)) {
@@ -116,7 +135,13 @@ async function handleRelayWebhook(relayId, body) {
   } catch {
     // best effort
   }
+  // Jarvis also calls sir back and tells him what they said (a short pause so sir isn't still on another call).
+  try {
+    await require('./ownerCalls').requestOwnerCall('NOTICE', { data: { notice: relaySpokenUpdate(relay, connected, theySaid, connectivity) }, delayMs: 20000 });
+  } catch {
+    // best effort
+  }
   return { ok: true };
 }
 
-module.exports = { findContact, callContact, activeRelayFor, handleRelayWebhook, relayVariables };
+module.exports = { findContact, callContact, activeRelayFor, handleRelayWebhook, relayVariables, relaySpokenUpdate };

@@ -175,7 +175,7 @@ function buildSpokenMessage(call, vars) {
 }
 
 /** Queue a call to Harshavardhan. Returns the OwnerCall row. */
-async function requestOwnerCall(type, { clientId = null, campaignId = null, data = null } = {}) {
+async function requestOwnerCall(type, { clientId = null, campaignId = null, data = null, delayMs = 0 } = {}) {
   // One open approval per client+type is enough — refresh it instead of piling up calls.
   if (clientId && type !== 'SUMMARY') {
     const open = await prisma.ownerCall.findFirst({ where: { client_id: clientId, type, status: { in: [...OPEN, 'NEEDS_MANUAL'] } } });
@@ -185,7 +185,9 @@ async function requestOwnerCall(type, { clientId = null, campaignId = null, data
     }
   }
 
-  const call = await prisma.ownerCall.create({ data: { type, client_id: clientId, campaign_id: campaignId, data } });
+  const call = await prisma.ownerCall.create({
+    data: { type, client_id: clientId, campaign_id: campaignId, data, ...(delayMs ? { next_attempt_at: new Date(Date.now() + delayMs) } : {}) },
+  });
 
   if (!config.isConfigured.ownerCalls) {
     await prisma.ownerCall.update({ where: { id: call.id }, data: { status: ['SUMMARY', 'UPDATE', 'NOTICE'].includes(type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: 'Assistant agent / owner phone not configured' } });
