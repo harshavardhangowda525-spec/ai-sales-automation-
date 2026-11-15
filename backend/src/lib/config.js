@@ -61,10 +61,11 @@ const config = {
     templateLang: env('WHATSAPP_TEMPLATE_LANG', 'en'),
   },
 
-  // Groq writes the Claude Code website build prompts
-  groq: {
-    apiKey: env('GROQ_API_KEY'),
-    model: env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+  // GitHub: one private repo per client website (fine-grained token with Administration + Contents write)
+  github: {
+    token: env('GITHUB_TOKEN'),
+    owner: env('GITHUB_OWNER'), // org name; leave empty to create repos under the token's user
+    repoPrefix: env('GITHUB_REPO_PREFIX', 'iwa-'),
   },
 
   openai: {
@@ -80,7 +81,7 @@ config.isConfigured = {
   google: Boolean(config.google.clientId && config.google.clientSecret && config.google.refreshToken),
   whatsapp: Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId),
   openai: Boolean(config.openai.apiKey),
-  groq: Boolean(config.groq.apiKey),
+  github: Boolean(config.github.token),
 };
 
 module.exports = config;

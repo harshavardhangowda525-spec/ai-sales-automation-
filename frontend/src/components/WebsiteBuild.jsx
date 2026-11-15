@@ -46,18 +46,27 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
     setBusy('prompt');
     try {
       const r = await api(`/api/clients/${client.id}/website-prompt`, { method: 'POST' });
-      toast(r.client.website_prompt_source === 'groq' ? 'New prompt written by Groq' : 'Prompt written from template (add GROQ_API_KEY for tailored prompts)', 'success');
+      toast(client.github_repo ? 'Brief rewritten — click "Update CLAUDE.md in repo" to push it' : 'CLAUDE.md brief rewritten', 'success');
       setShowPrompt(true);
       onChanged?.();
     } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
   }
 
   async function copy() {
-    try { await navigator.clipboard.writeText(client.website_prompt); toast('Prompt copied — paste it into Claude Code', 'success'); }
+    try { await navigator.clipboard.writeText(client.website_prompt); toast('Brief copied — paste it into Claude Code', 'success'); }
     catch { toast('Copy failed — use Download instead', 'error'); }
   }
 
-  const fileName = `${client.business_name.replace(/[^\w-]+/g, '-').toLowerCase()}-website-prompt.md`;
+  const fileName = 'CLAUDE.md';
+
+  async function repo() {
+    setBusy('repo');
+    try {
+      const r = await api(`/api/clients/${client.id}/github-repo`, { method: 'POST' });
+      toast(client.github_repo ? 'CLAUDE.md updated in the repo' : `Private repo ${r.client.github_repo} created`, 'success');
+      onChanged?.();
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(''); }
+  }
 
   return (
     <div className="card p-5">
@@ -90,10 +99,10 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
       <div className="mt-5 rounded-lg border border-line p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-medium text-ink">Claude Code build prompt</p>
+            <p className="text-sm font-medium text-ink">Claude Code brief (CLAUDE.md)</p>
             <p className="text-xs text-gray-500">
               {client.website_prompt
-                ? `${client.website_prompt_source === 'groq' ? 'Written by Groq' : 'Built-in template'} · ${fmtDateTime(client.website_prompt_at)}`
+                ? `Written ${fmtDateTime(client.website_prompt_at)}`
                 : 'Not written yet'}
             </p>
           </div>
@@ -101,20 +110,36 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
             {client.website_prompt && <>
               <button className="btn-ghost btn-sm" onClick={() => setShowPrompt((s) => !s)}>{showPrompt ? 'Hide' : 'View'}</button>
               <button className="btn-ghost btn-sm" onClick={copy}>Copy</button>
-              <button className="btn-ghost btn-sm" onClick={() => downloadFile(`/api/clients/${client.id}/website-prompt.md`, fileName).catch((e) => toast(e.message, 'error'))}>Download .md</button>
+              <button className="btn-ghost btn-sm" onClick={() => downloadFile(`/api/clients/${client.id}/website-prompt.md`, fileName).catch((e) => toast(e.message, 'error'))}>Download</button>
             </>}
             <button className="btn-primary btn-sm" disabled={busy === 'prompt'} onClick={regenerate}>
-              <Icon name="refresh" className={`h-3.5 w-3.5 ${busy === 'prompt' ? 'animate-spin' : ''}`} /> {client.website_prompt ? 'Rewrite' : 'Write prompt'}
+              <Icon name="refresh" className={`h-3.5 w-3.5 ${busy === 'prompt' ? 'animate-spin' : ''}`} /> {client.website_prompt ? 'Rewrite' : 'Write brief'}
             </button>
           </div>
         </div>
         {showPrompt && client.website_prompt && (
           <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-lg bg-navy p-4 font-mono text-xs leading-relaxed text-gray-300">{client.website_prompt}</pre>
         )}
-        <p className="mt-3 text-xs text-gray-500">
-          To build: create an empty folder on your computer, open Claude Code in it, and paste this prompt
-          (or save the download as <code className="text-gray-400">CLAUDE.md</code> there and ask Claude to "build the site described in CLAUDE.md").
-        </p>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-line p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink">GitHub repo</p>
+            {client.github_repo
+              ? <a href={client.github_repo_url} target="_blank" rel="noreferrer" className="break-all text-xs text-blue-400 hover:underline">{client.github_repo} (private)</a>
+              : <p className="text-xs text-gray-500">One private repo per client — keeps every site's code separate</p>}
+          </div>
+          <button className="btn-ghost btn-sm" disabled={busy === 'repo' || !client.website_prompt} onClick={repo}>
+            {busy === 'repo' ? 'Working…' : client.github_repo ? 'Update CLAUDE.md in repo' : 'Create GitHub repo'}
+          </button>
+        </div>
+        <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs text-gray-400">
+          <li>{client.github_repo ? 'Repo is ready with CLAUDE.md.' : 'Create the repo (it gets this CLAUDE.md and a README).'}</li>
+          <li>Open it in Claude Code: <a href="https://claude.ai/code" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">claude.ai/code</a> → choose the repo (or <code className="text-gray-300">claude</code> in a local clone).</li>
+          <li>Say <span className="text-gray-200">"Build the website described in CLAUDE.md."</span> Claude plans in PLAN.md, then builds and commits there.</li>
+          <li>Paste the preview link above and move the stage to In review → Ready.</li>
+        </ol>
       </div>
     </div>
   );

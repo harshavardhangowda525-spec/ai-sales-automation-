@@ -114,11 +114,18 @@ Set `REQUIRE_QUOTATION_APPROVAL=false` if you ever want quotations sent automati
 
 The **Jarvis, call me now** button on the Overview page calls you straight away, even outside calling hours. Jarvis reports on the latest campaign (calls made, who booked, callbacks, rejected, no answer, Meets scheduled), where every website build stands, and how many approvals are waiting. The agent gets `call_type` = `update` plus `campaign_name`, `total_calls`, `websites_summary` and `pending_approvals`, along with the summary variables. A preview of what Jarvis will say is shown before it calls.
 
-### Website builds with Claude Code
+### Website builds with Claude Code (one GitHub repo per client)
 
-Every booked client gets a **Claude Code build prompt**. Groq writes it (`GROQ_API_KEY`, model `GROQ_MODEL`) from the client's requirements, plan scope and business details. Without a key, a built-in template is used. On the client's page you can view, copy or download it as a `.md` file, or rewrite it. To build, open Claude Code in an empty folder on your computer and paste the prompt, or save it as `CLAUDE.md` and ask Claude to build the site it describes.
+Every booked client gets a **CLAUDE.md brief**: business details, call requirements, plan scope, how to work (write `PLAN.md` first, then build) and a done checklist. No AI API key is involved. On the client page, **Create GitHub repo** makes a private repo (`iwa-<business-name>`) containing that `CLAUDE.md` and a README, so each client's code stays separate. Open the repo in Claude Code (claude.ai/code, or `claude` in a local clone) on your Claude plan and say *"Build the website described in CLAUDE.md."* If the brief changes, **Rewrite** it, then **Update CLAUDE.md in repo**.
 
-Progress is tracked in stages on the client page: **Prompt ready → In development → In review → Ready → Delivered**. You can also save a preview link. Clicking **Ready** asks for the live link and queues the website-ready approval call. Once you approve, the client gets the link on WhatsApp and the stage becomes **Delivered**.
+Setup: create a GitHub fine-grained token (All repositories → Administration: Read & write, Contents: Read & write) and add it on Render as `GITHUB_TOKEN`. Set `GITHUB_OWNER` only if the repos should live in an organisation.
+
+Stages on the client page: **Brief ready → In development** (set automatically when the repo is created) **→ In review → Ready → Delivered**. Clicking **Ready** asks for the live link and queues the website-ready approval call; once you approve, the client gets the link on WhatsApp.
+
+### Jarvis dashboard lookup (Sarvam API tool)
+
+Add an API tool named `lookup_dashboard` to the Jarvis agent so he can fetch anything mid-call:
+`POST <API>/webhook/sarvam/jarvis-lookup?secret=<SARVAM_WEBHOOK_SECRET>` with body `{"query": "<client name or topic>", "caller": "<caller phone number>"}`. Topics include `today`, `campaign`, `booked`, `websites`, `callbacks`, `pending` and `all`. The response field `answer` is what Jarvis says. It only answers when the caller is `HARSHAVARDHAN_PHONE`.
 
 ### Second WhatsApp template: website ready
 
@@ -238,7 +245,9 @@ All `/api/*` routes need `Authorization: Bearer <ADMIN_TOKEN>` when `ADMIN_TOKEN
 | POST | `/api/approvals/:id/approve` · `/reject` · `/call-again` | Decide from the dashboard |
 | POST | `/webhook/sarvam/owner` | Result of calls to Harsha (`?secret=`) |
 | POST | `/api/approvals/update-call` | "Jarvis, call me now": status call immediately (`GET /api/approvals/update-preview` shows what it will say) |
-| POST | `/api/clients/:id/website-prompt` | (Re)write the Claude Code build prompt (Groq or template) |
+| POST | `/api/clients/:id/website-prompt` | (Re)write the CLAUDE.md brief |
+| POST | `/api/clients/:id/github-repo` | Create the client's private repo with CLAUDE.md (or update CLAUDE.md) |
+| GET/POST | `/webhook/sarvam/jarvis-context` · `/jarvis-lookup` | Jarvis tools: on-start context and mid-call dashboard lookup (`?secret=`) |
 | GET | `/api/clients/:id/website-prompt.md` | Download the build prompt |
 | GET | `/proposals/:id.pdf` | Public proposal PDF (`?download=1` to download) |
 | GET | `/health` | DB + integration status |

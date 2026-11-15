@@ -7,6 +7,7 @@ const { generateProposal } = require('../services/proposalGenerator');
 const { sendWhatsAppMessage } = require('../services/whatsapp');
 const { requestOwnerCall } = require('../services/ownerCalls');
 const { generateWebsitePrompt } = require('../services/websitePrompt');
+const { createClientRepo } = require('../services/github');
 const STAGES = ['NOT_STARTED', 'PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW', 'READY', 'DELIVERED'];
 
 const router = express.Router();
@@ -166,6 +167,23 @@ router.post('/:id/website-prompt', async (req, res, next) => {
     res.json({ ok: true, client });
   } catch (err) {
     next(err);
+  }
+});
+
+// POST /api/clients/:id/github-repo — create the client's private repo with CLAUDE.md (or refresh CLAUDE.md)
+router.post('/:id/github-repo', async (req, res, next) => {
+  try {
+    const exists = await prisma.client.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!exists) return res.status(404).json({ error: 'Client not found' });
+    const client = await createClientRepo(req.params.id);
+    res.json({ ok: true, client });
+  } catch (err) {
+    await logError(req.params.id, 'GITHUB_REPO', err);
+    // Never pass GitHub's 401/403 through: the dashboard treats 401 as "log out".
+    const msg = [401, 403].includes(err.status)
+      ? `GitHub refused the token (${err.status}) — check GITHUB_TOKEN has Administration + Contents write access`
+      : err.message;
+    res.status(err.status === 400 ? 400 : 502).json({ error: msg });
   }
 });
 

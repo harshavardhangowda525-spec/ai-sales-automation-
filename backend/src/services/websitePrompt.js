@@ -1,7 +1,5 @@
-// Writes a ready-to-paste build prompt for Claude Code (run locally by Harsha) that describes
-// exactly what website to build for a client. Uses Groq (GROQ_API_KEY) when set, otherwise a
-// built-in template filled with the client's details and plan scope.
-const config = require('../lib/config');
+// Writes the CLAUDE.md brief for a client's website. Claude Code (on Harsha's Claude plan, no
+// API key) reads it in the client's own GitHub repo, plans the site and builds it.
 const prisma = require('../lib/prisma');
 const { logAction } = require('../lib/logger');
 const { PLANS } = require('./proposalGenerator');
@@ -63,10 +61,18 @@ function businessFacts(client) {
 function templatePrompt(client) {
   const key = planKey(client);
   const scope = PLAN_SCOPE[key];
-  return `# Build: ${client.business_name} website (${PLANS[key].name} plan)
+  return `# CLAUDE.md — ${client.business_name} website (${PLANS[key].name} plan)
 
 You are building a production-ready website for a local business client of **Infinity Web & Apps** (Bengaluru).
-Work in this folder, create the project from scratch, and keep going until the checklist at the end is complete.
+This repository holds only this client's site. Work in it, create the project from scratch, and keep going
+until the checklist at the end is complete.
+
+## How to work
+1. First write \`PLAN.md\`: the page list, every section on each page with the actual copy you'll use
+   (specific to this business — no lorem ipsum), the colour palette and fonts, and the features in scope.
+2. Then build the site from the plan. Commit in small, clear steps.
+3. Finish with the README and the done checklist below. Stay within the plan's scope — don't add paid
+   features the client hasn't bought.
 
 ## Client
 ${businessFacts(client)}
@@ -103,43 +109,6 @@ ${key !== 'BASIC' ? '- [ ] SEO meta tags, sitemap.xml, robots.txt, LocalBusiness
 `;
 }
 
-const SYSTEM = `You write build prompts for Claude Code (an AI coding agent the agency runs locally).
-Given a local Indian business client, their plan scope and what they said on a sales call, write ONE
-complete, specific, ready-to-paste prompt in Markdown that makes Claude Code build their website end to end.
-The prompt must include: a title; the client facts; exact page list with the sections on each page and what
-copy each section should say (specific to this business, not generic); features to implement for the plan;
-tech stack; design direction (palette, typography, mood suited to the business); content/SEO details;
-WhatsApp + tap-to-call links using the client's number; where to use placeholder images; deliverables;
-and a "Done checklist" of verifiable items. Stay within the plan's scope — never add paid features the plan
-doesn't include. Output only the prompt Markdown, no preamble.`;
-
-async function groqPrompt(client) {
-  const key = planKey(client);
-  const scope = PLAN_SCOPE[key];
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${config.groq.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: config.groq.model,
-      temperature: 0.4,
-      max_tokens: 4000,
-      messages: [
-        { role: 'system', content: SYSTEM },
-        {
-          role: 'user',
-          content: `${businessFacts(client)}\n\nPlan scope:\n- Pages: ${scope.pages}\n- Features:\n${scope.features.map((f) => `  - ${f}`).join('\n')}\n- Tech stack: ${scope.stack}\n\nWrite the Claude Code build prompt now.`,
-        },
-      ],
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
-  if (!res.ok) throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 400)}`);
-  const json = await res.json();
-  const text = json.choices?.[0]?.message?.content?.trim();
-  if (!text || text.length < 200) throw new Error('Groq returned an empty prompt');
-  return text.replace(/^```(?:markdown|md)?\n/, '').replace(/\n```$/, '');
-}
-
 /**
  * Generate (or regenerate) the build prompt for a client and save it.
  * Moves the website stage to PROMPT_READY if it hadn't started yet.
@@ -147,17 +116,8 @@ async function groqPrompt(client) {
 async function generateWebsitePrompt(clientOrId) {
   const id = typeof clientOrId === 'string' ? clientOrId : clientOrId.id;
   const client = await prisma.client.findUnique({ where: { id } });
-  let prompt;
-  let source = 'template';
-  if (config.isConfigured.groq) {
-    try {
-      prompt = await groqPrompt(client);
-      source = 'groq';
-    } catch (err) {
-      await logAction(client.id, 'WEBSITE_PROMPT_GROQ_ERROR', `${err.message} — used the built-in template instead`);
-    }
-  }
-  if (!prompt) prompt = templatePrompt(client);
+  const prompt = templatePrompt(client);
+  const source = 'template';
 
   const updated = await prisma.client.update({
     where: { id },
@@ -168,7 +128,7 @@ async function generateWebsitePrompt(clientOrId) {
       ...(client.website_stage === 'NOT_STARTED' ? { website_stage: 'PROMPT_READY' } : {}),
     },
   });
-  await logAction(client.id, 'WEBSITE_PROMPT_READY', `Claude Code build prompt written (${source}, ${prompt.length} chars)`);
+  await logAction(client.id, 'WEBSITE_PROMPT_READY', `CLAUDE.md brief written (${prompt.length} chars)`);
   return updated;
 }
 
