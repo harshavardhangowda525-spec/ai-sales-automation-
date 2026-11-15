@@ -199,6 +199,10 @@ jobs:
           if [ -n "$VERCEL_SCOPE" ]; then SCOPE="--scope $VERCEL_SCOPE"; fi
           URL=$(npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN" $SCOPE 2>vercel.err | tail -n 1)
           cat vercel.err | tail -n 20
+          # The deployment URL is login-protected; send the public production alias (shortest *.vercel.app) instead.
+          Q=""; if [ -n "$VERCEL_SCOPE" ]; then case "$VERCEL_SCOPE" in team_*) Q="?teamId=$VERCEL_SCOPE";; *) Q="?slug=$VERCEL_SCOPE";; esac; fi
+          ALIAS=$(curl -sS "https://api.vercel.com/v9/projects/\${{ github.event.repository.name }}$Q" -H "Authorization: Bearer $VERCEL_TOKEN" | jq -r '.targets.production.alias[]? // empty' | awk '{ print length, $0 }' | sort -n | head -n 1 | cut -d' ' -f2)
+          if [ -n "$ALIAS" ]; then URL="https://$ALIAS"; fi
           case "$URL" in https://*) echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"; echo "Live preview: $URL";; *) echo "::error::Vercel deploy failed: $(tail -n 3 vercel.err | tr '\\n' ' ')"; exit 1;; esac
 
       - name: Tell the Infinity dashboard
