@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
+const config = require('../lib/config');
 
 const router = express.Router();
 
@@ -17,7 +18,19 @@ router.get('/', async (req, res, next) => {
         meeting_time: true, meeting_link: true, portal_status: true, proposal_sent: true, requirements: true,
       },
     });
-    res.json(meetings);
+    // Google Calendar events for the same range (skip ones that are already a booked consultation).
+    let googleEvents = [];
+    let googleError = null;
+    try {
+      const { listGoogleEvents } = require('../services/googleCalendar');
+      const booked = new Set((await prisma.client.findMany({
+        where: { calendar_event_id: { not: null } }, select: { calendar_event_id: true },
+      })).map((c) => c.calendar_event_id));
+      googleEvents = (await listGoogleEvents(from, to)).filter((e) => !booked.has(e.id));
+    } catch (err) {
+      googleError = err.message;
+    }
+    res.json({ meetings, google_events: googleEvents, google_connected: config.isConfigured.google, google_error: googleError });
   } catch (err) {
     next(err);
   }

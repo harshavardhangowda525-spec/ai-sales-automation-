@@ -244,6 +244,29 @@ async function listUpcomingSchedule({ days = 7 } = {}) {
   return items.sort((a, b) => a.start - b.start);
 }
 
+/** Google Calendar events between two dates (for the dashboard's Calendar page). */
+async function listGoogleEvents(from, to) {
+  if (!config.isConfigured.google) return [];
+  const { data } = await calendarApi().events.list({
+    calendarId: config.google.calendarId,
+    timeMin: from.toISOString(),
+    timeMax: to.toISOString(),
+    singleEvents: true,
+    orderBy: 'startTime',
+    maxResults: 250,
+  });
+  return (data.items || []).filter((e) => e.status !== 'cancelled').map((e) => ({
+    id: e.id,
+    title: e.summary || '(No title)',
+    start: e.start?.dateTime || (e.start?.date ? `${e.start.date}T00:00:00+05:30` : null),
+    end: e.end?.dateTime || (e.end?.date ? `${e.end.date}T00:00:00+05:30` : null),
+    all_day: !e.start?.dateTime,
+    location: e.location || null,
+    meet_link: extractMeetLink(e),
+    html_link: e.htmlLink || null,
+  })).filter((e) => e.start);
+}
+
 /** Plain calendar entry for sir (no Meet link, nobody invited). */
 async function addCalendarEvent({ title, start, minutes = 30, description }) {
   if (!config.isConfigured.google) throw new Error('Google Calendar is not connected');
@@ -261,4 +284,4 @@ async function addCalendarEvent({ title, start, minutes = 30, description }) {
   return data;
 }
 
-module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule, addCalendarEvent };
+module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule, addCalendarEvent, listGoogleEvents };
