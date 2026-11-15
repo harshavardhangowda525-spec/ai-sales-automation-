@@ -76,8 +76,16 @@ async function jarvisContext(req, res) {
 
     if (caller && owner && caller === owner) {
       const context = await buildJarvisContext();
+      // If Jarvis is calling sir right now (outbound), return that call's update instead of "-".
+      const active = await prisma.ownerCall.findFirst({
+        where: { status: 'CALLING', called_at: { gt: new Date(Date.now() - 10 * 60000) } },
+        orderBy: { called_at: 'desc' },
+      });
+      if (active?.data?.spoken_message) {
+        return res.json({ harsha_message: active.data.spoken_message, jarvis_context: context, caller_is_owner: 'yes', direction: 'outbound' });
+      }
       await logAction(null, 'JARVIS_INBOUND_CALL', 'Sir called Jarvis — latest context loaded');
-      return res.json({ harsha_message: '-', jarvis_context: context, caller_is_owner: 'yes' });
+      return res.json({ harsha_message: '-', jarvis_context: context, caller_is_owner: 'yes', direction: 'inbound' });
     }
 
     let note = 'unknown number';

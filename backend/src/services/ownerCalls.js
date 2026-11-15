@@ -162,6 +162,8 @@ async function placeCall(call) {
   try {
     const variables = buildVariables(call, client);
     const message = buildSpokenMessage(call, variables);
+    // Remember what this call should say, so the agent's on-start tool can fetch it too.
+    await prisma.ownerCall.update({ where: { id: call.id }, data: { data: { ...(call.data || {}), spoken_message: message } } });
     const result = await placeOutboundCall({
       phoneNumber: config.ownerPhone,
       appId: config.sarvam.summaryAgentId,
