@@ -11,6 +11,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const clientRoutes = require('./routes/clients');
 const campaignRoutes = require('./routes/campaigns');
 const approvalRoutes = require('./routes/approvals');
+const calendarRoutes = require('./routes/calendar');
 const { startOwnerCallWorker } = require('./services/ownerCalls');
 
 process.env.TZ = 'Asia/Kolkata'; // console timestamps in IST; all date math is explicit IST anyway
@@ -76,6 +77,7 @@ app.use('/api/clients', requireAdmin, clientRoutes);
 app.use('/api/campaigns', requireAdmin, campaignRoutes);
 app.use('/api/campaign', requireAdmin, campaignRoutes);
 app.use('/api/approvals', requireAdmin, approvalRoutes);
+app.use('/api/calendar', requireAdmin, calendarRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

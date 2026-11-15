@@ -4,6 +4,7 @@ import Icon from './Icon';
 const NAV = [
   { to: '/', label: 'Overview', icon: 'grid', end: true },
   { to: '/clients', label: 'Clients', icon: 'users' },
+  { to: '/calendar', label: 'Calendar', icon: 'calendar' },
   { to: '/campaigns', label: 'Campaigns', icon: 'phone' },
 ];
 

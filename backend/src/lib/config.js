@@ -27,6 +27,9 @@ const config = {
     summaryAgentVersion: Number(env('SARVAM_ASSISTANT_AGENT_VERSION', env('SARVAM_SUMMARY_AGENT_VERSION', 1))),
   },
   ownerPhone: env('HARSHAVARDHAN_PHONE'),
+  // Video-call link for consultations when Google isn't connected (e.g. your permanent Meet room).
+  // Empty → each consultation gets its own free Jitsi Meet room.
+  meetingRoomUrl: env('MEETING_ROOM_URL'),
   ownerCalls: {
     // Ask Harshavardhan on a call before a quotation goes to the client (default on)
     requireQuotationApproval: env('REQUIRE_QUOTATION_APPROVAL', 'true') !== 'false',

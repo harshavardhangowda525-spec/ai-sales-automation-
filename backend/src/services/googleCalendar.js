@@ -56,6 +56,35 @@ function computeStartTime(prefs = {}, now = new Date()) {
 }
 
 /** Shift forward in 30-minute steps until the slot is free on the calendar (best effort). */
+/** A real video-call link without any API: MEETING_ROOM_URL if set, else a unique Jitsi Meet room. */
+function meetingRoomLink(client) {
+  if (config.meetingRoomUrl) return config.meetingRoomUrl;
+  const slug = String(client.business_name).normalize('NFKD').replace(/[^A-Za-z0-9]+/g, '').slice(0, 30) || 'Client';
+  return `https://meet.jit.si/InfinityWebApps-${slug}-${crypto.randomBytes(3).toString('hex')}`;
+}
+
+/** Shift forward in 30-minute steps until no other client's consultation overlaps (portal calendar). */
+async function findFreePortalSlot(start, clientId) {
+  let candidate = new Date(start);
+  for (let i = 0; i < 24; i++) {
+    const { hour } = istParts(candidate);
+    if (hour >= WORK_START && hour < WORK_END) {
+      const clash = await prisma.client.count({
+        where: {
+          id: { not: clientId },
+          meeting_time: {
+            gt: new Date(candidate.getTime() - DURATION_MIN * 60000),
+            lt: new Date(candidate.getTime() + DURATION_MIN * 60000),
+          },
+        },
+      });
+      if (!clash) return candidate;
+    }
+    candidate = new Date(candidate.getTime() + DURATION_MIN * 60000);
+  }
+  return start;
+}
+
 async function findFreeSlot(calendar, start) {
   let candidate = new Date(start);
   for (let i = 0; i < 12; i++) {
@@ -126,14 +155,18 @@ async function scheduleGoogleMeet(client, prefs = {}, opts = {}) {
   });
 
   if (!config.isConfigured.google) {
-    const mockLink = `https://meet.google.com/mock-${client.id.slice(0, 3)}-${client.id.slice(4, 8)}`;
+    // Portal calendar (no Google): the dashboard is the source of truth for meetings.
+    if (!opts.startTime) start = await findFreePortalSlot(start, client.id);
+    const link = client.meeting_link && !client.meeting_link.includes('/mock-')
+      ? client.meeting_link // keep the same room when rescheduling
+      : meetingRoomLink(client);
     await prisma.client.update({
       where: { id: client.id },
-      data: { meeting_link: mockLink, meeting_time: start, calendar_event_id: null },
+      data: { meeting_link: link, meeting_time: start, calendar_event_id: null },
     });
-    await logAction(client.id, 'MEET_SCHEDULED_MOCK',
-      `Google not configured — mock meeting saved for ${toISTISOString(start)}`);
-    return { meetLink: mockLink, eventId: null, scheduledTime: start, mock: true };
+    await logAction(client.id, client.meeting_time ? 'MEET_RESCHEDULED' : 'MEET_SCHEDULED',
+      `Consultation on the portal calendar at ${toISTISOString(start)} — ${link}`);
+    return { meetLink: link, eventId: null, scheduledTime: start };
   }
 
   const calendar = calendarApi();
