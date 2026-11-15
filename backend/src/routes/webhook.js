@@ -11,7 +11,8 @@ const { formatMeetingTime } = require('../lib/time');
 const router = express.Router();
 
 // Log every Jarvis tool request (without bodies) so tool usage is visible in the activity feed.
-router.use(/^\/sarvam\/jarvis-/, (req, res, next) => {
+router.use((req, res, next) => {
+  if (!req.path.startsWith('/sarvam/jarvis-')) return next();
   const src = { ...(req.query || {}), ...(req.body || {}) };
   const tool = req.path.split('/').pop();
   logAction(null, 'JARVIS_TOOL', `Jarvis used ${tool}${callerFrom(src) ? '' : ' (no caller number received)'}`).catch(() => {});
