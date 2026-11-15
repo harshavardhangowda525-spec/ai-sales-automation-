@@ -169,6 +169,10 @@ async function jarvisLookup(req, res) {
     }
     const q = String(src.query || src.q || '').trim();
     const ql = q.toLowerCase();
+    const contact = q ? await require('../services/relayCalls').findContact(ql.replace(/\b(contact|details|number|phone|for|of|s|'s)\b/g, ' ')).catch(() => null) : null;
+    if (contact) {
+      return res.json({ answer: `${contact.name} is in sir's personal contacts: ${contact.phone}. You can call them for sir (send_whatsapp with message starting "CALL:") or WhatsApp them.` });
+    }
 
     // 1. A specific client by business or contact name
     if (q && !/^(all|everything|summary|today|campaign|pending|approval|website|callback|booked|bookings?|calendar|schedule|meetings?|agenda|tomorrow|week)\b/.test(ql)) {
@@ -382,11 +386,44 @@ async function jarvisSchedule(req, res) {
 }
 
 // POST /webhook/sarvam/jarvis-whatsapp { client, message, caller }
+/** Jarvis calls one of sir's personal contacts and passes on his message. */
+async function relayFor(who, message, phone, res) {
+  const relayCalls = require('../services/relayCalls');
+  const msg = String(message || '').replace(/^\s*call\s*:\s*/i, '').replace(/^\s*(and\s+)?(tell|say to|inform)\s+(her|him|them)\s+(that\s+)?/i, '').trim();
+  if (!who) return res.json({ answer: 'Who should I call, sir?' });
+  if (!msg) return res.json({ answer: `What should I tell ${who}, sir?` });
+  const contact = await relayCalls.findContact(who);
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!contact && digits.length < 10) {
+    return res.json({ answer: `I don't have a number saved for ${who}, sir. Tell me their number, or add them under Contacts in the dashboard.` });
+  }
+  try {
+    const relay = await relayCalls.callContact({ contact, phone, name: who, message: msg });
+    return res.json({ answer: `Calling ${relay.to_name} now, sir. I'll tell them "${msg}" and WhatsApp you what they say.` });
+  } catch (err) {
+    await logError(null, 'JARVIS_CALL_CONTACT', err);
+    return res.json({ answer: `I couldn't place that call, sir: ${err.message}` });
+  }
+}
+
 async function jarvisWhatsApp(req, res) {
   const { src, isOwner } = toolInput(req);
   if (!isOwner) return res.json({ answer: 'Only sir can send messages.' });
   try {
-    const client = await findClient(src.client || src.name);
+    const who = src.client || src.name;
+    // "CALL: ..." means sir wants a phone call, not a WhatsApp (no separate tool needed in Sarvam).
+    if (/^\s*call\s*:/i.test(String(src.message || ''))) return relayFor(who, src.message, src.phone, res);
+    // Personal contacts (Mom, Dad…) get the WhatsApp at their own number — they are not clients.
+    const contact = await require('../services/relayCalls').findContact(who).catch(() => null);
+    if (contact) {
+      const message = String(src.message || '').trim();
+      if (!message) return res.json({ answer: 'What should the message say, sir?' });
+      if (!(await waLinked.hasSession())) return res.json({ answer: 'Your WhatsApp isn\'t linked right now, sir — please link it on the WhatsApp page.' });
+      await waLinked.sendText(contact.phone, message);
+      await logAction(null, 'WHATSAPP_SENT', `Sent by voice to ${contact.name}: "${message.slice(0, 300)}"`);
+      return res.json({ answer: `Sent to ${contact.name} on WhatsApp, sir. If you want me to call ${contact.name} instead, just say so.` });
+    }
+    const client = await findClient(who);
     if (!client) return res.json({ answer: `I couldn't find a client called "${src.client || src.name}", sir.` });
     const message = String(src.message || '').trim();
     if (!message) return res.json({ answer: 'What should the message say, sir?' });
@@ -409,8 +446,12 @@ async function jarvisBuild(req, res) {
     ? await findClient(wanted).catch(() => null)
     : await onlyActiveProject().catch(() => null);
   if (!client && !wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
-  // build_project doubles as deploy / send-quotation, so no new tools are needed in the Sarvam editor.
+  // build_project doubles as deploy / send-quotation / call-a-person, so no new tools are needed in the Sarvam editor.
   const intent = `${src.kind || ''} ${src.action || ''} ${src.instructions || ''}`.toLowerCase();
+  if (/^\s*(call|phone call|relay)\b/.test(String(src.kind || '').toLowerCase())) {
+    const spoken = String(src.instructions || '').replace(/[^\d+]/g, '');
+    return relayFor(wanted, src.instructions || src.message, src.phone || (spoken.match(/(?:\+?91)?[6-9]\d{9}/) || [])[0], res);
+  }
   const isBuild = /\b(build|rebuild|redo|create|make (a|the|it)|website for|app for|change|update|fix)\b/.test(intent);
   const wantsDeploy = !isBuild && !/\b(quotation|quote|proposal)\b/.test(intent) && /\b(deploy|publish|go live|make it live|put it live|live link|host)\b/.test(intent);
   const wantsQuote = /\b(quotation|quote|proposal|approve|approved)\b/.test(intent);
@@ -544,22 +585,7 @@ router.post('/sarvam/jarvis-add-client', verifySecret, jarvisAddClient);
 async function jarvisCallContact(req, res) {
   const { src, isOwner } = toolInput(req);
   if (!isOwner) return res.json({ answer: 'Only sir can ask me to call people.' });
-  try {
-    const relayCalls = require('../services/relayCalls');
-    const who = src.contact || src.name || src.person;
-    const message = String(src.message || '').trim();
-    if (!who) return res.json({ answer: 'Who should I call, sir?' });
-    if (!message) return res.json({ answer: `What should I tell ${who}, sir?` });
-    const contact = await relayCalls.findContact(who);
-    if (!contact && !src.phone) {
-      return res.json({ answer: `I don't have a number saved for ${who}, sir. Add them under Contacts in the dashboard, or tell me their number.` });
-    }
-    const relay = await relayCalls.callContact({ contact, phone: src.phone, name: who, message });
-    return res.json({ answer: `Calling ${relay.to_name} now, sir. I'll tell them "${message}" and WhatsApp you what they say.` });
-  } catch (err) {
-    await logError(null, 'JARVIS_CALL_CONTACT', err);
-    return res.json({ answer: `I couldn't place that call, sir: ${err.message}` });
-  }
+  return relayFor(src.contact || src.name || src.person, src.message, src.phone, res);
 }
 router.post('/sarvam/jarvis-call-contact', verifySecret, jarvisCallContact);
 

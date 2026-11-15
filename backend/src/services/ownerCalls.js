@@ -107,6 +107,10 @@ async function buildJarvisContext() {
         + `${c.website_preview_url ? `; live preview ${c.website_preview_url}` : '; no live link yet'}`);
     }
   }
+  const contacts = await prisma.contact.findMany({ orderBy: { name: 'asc' }, take: 15 });
+  lines.push(contacts.length
+    ? `Sir's personal contacts (NOT clients): ${contacts.map((c) => `${c.name}${c.aliases ? ` (${c.aliases})` : ''}`).join('; ')}.`
+    : 'Sir has no personal contacts saved yet.');
   const schedule = await scheduleText({ days: 7 });
   lines.push(schedule ? `Sir's schedule, next 7 days (Google Calendar + booked consultations): ${schedule}.` : "Sir's calendar is clear for the next 7 days.");
   lines.push(pending.length
@@ -123,6 +127,7 @@ const JARVIS_RULES = [
   '  1) BUILD — sir says build / make / rebuild / change the website: call build_project with the client and his instructions. Claude builds it; you call sir when it is built.',
   '  2) DEPLOY — sir says deploy / publish / make it live / send me the link: call build_project with kind = "deploy". It goes live on a preview link; sir gets the link on WhatsApp and you call him.',
   '  3) QUOTATION — two steps. (a) Sir says prepare / send the quotation (or proposal): call build_project with kind = "quotation" (put any phone number sir gives in instructions). It is sent to SIR on WhatsApp only. Then ask: "Shall I send it to the client?" (b) Only when sir clearly says yes / approve / send it to the client: call build_project with kind = "approve quotation". Never send to the client without that yes.',
+  '- CALLING SOMEONE: you CAN make phone calls. When sir says "call my mom / amma / <name> and tell her …", call send_whatsapp with client = that person (e.g. "Mom") and message = "CALL: " + sir\'s message (e.g. "CALL: I\'ll be late today"). You will phone them and pass it on. Without "CALL:" it is only a WhatsApp. Never add family or friends as clients.',
   '- After any tool call, repeat what the tool answered — that is the truth. If it says something failed or is missing, tell sir exactly that.',
   '- If sir does not name the client and only one project is listed above, use that one — do not ask "which client?". Ask only if several could match, and never ask the same question twice: act on your best guess.',
   '- Speech-to-text mishears names. Map what you hear to the closest name listed above (e.g. "Masil House" = Muscle House). Never create a new client from a misheard name.',
