@@ -30,7 +30,7 @@ function buildVariables(call, client) {
     requirements: (client?.requirements || '-').replace(/\s*\n+\s*/g, '; ').slice(0, 400),
     website_url: call.data?.website_url || '-',
     booked_count: '-', booked_names: '-', callback_count: '-', rejected_count: '-', no_answer_count: '-', meets_scheduled: '-',
-    campaign_name: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-',
+    campaign_name: '-', period: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-',
   };
   if (call.type === 'SUMMARY' || call.type === 'UPDATE') Object.assign(base, call.data || {});
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
@@ -90,7 +90,9 @@ function buildSpokenMessage(call, vars) {
     parts.push(call.type === 'UPDATE'
       ? "Here's your update, sir."
       : 'Your outreach campaign is wrapped up, sir.');
-    if (call.type === 'UPDATE' && vars.campaign_name && vars.campaign_name !== '-') {
+    if (call.type === 'UPDATE' && vars.period && vars.period !== '-') {
+      parts.push(`${vars.period}, ${vars.total_calls} calls were made.`);
+    } else if (call.type === 'UPDATE' && vars.campaign_name && vars.campaign_name !== '-') {
       parts.push(num(vars.total_calls) ? `On ${vars.campaign_name}, ${vars.total_calls} calls were made.` : 'No calls have been made yet.');
     }
     if (num(vars.booked_count)) parts.push(`${vars.booked_count} booked: ${vars.booked_names}.`);
@@ -143,6 +145,11 @@ async function requestOwnerCall(type, { clientId = null, campaignId = null, data
 }
 
 async function placeCall(call) {
+  // Automatic updates are refreshed right before dialling so late results are included.
+  if (call.type === 'UPDATE' && call.data?.since) {
+    const fresh = await buildUpdateData({ since: new Date(call.data.since) });
+    call = await prisma.ownerCall.update({ where: { id: call.id }, data: { data: { ...fresh, auto: true, since: call.data.since } } });
+  }
   // Lazy require avoids a circular import (sarvam.js → ownerCalls.js for summary calls).
   const { placeOutboundCall } = require('./sarvam');
   const client = call.client_id ? await prisma.client.findUnique({ where: { id: call.client_id } }) : null;
@@ -192,6 +199,54 @@ async function scheduleRetryOrManual(id, note) {
   }
 }
 
+/**
+ * Automatic Jarvis update: once business calls have gone quiet for OWNER_UPDATE_QUIET_MINUTES
+ * and there are new results since the last update/summary, queue an update call to Harsha.
+ */
+async function maybeAutoUpdate() {
+  if (!config.ownerCalls.autoUpdate || !config.isConfigured.ownerCalls || !inCallingHours()) return;
+  const open = await prisma.ownerCall.count({ where: { type: { in: ['UPDATE', 'SUMMARY'] }, status: { in: ['QUEUED', 'CALLING'] } } });
+  if (open) return;
+
+  const last = await prisma.ownerCall.findFirst({
+    where: { type: { in: ['UPDATE', 'SUMMARY'] }, status: { notIn: ['CANCELLED'] } },
+    orderBy: { created_at: 'desc' },
+  });
+  const since = last?.created_at || new Date(Date.now() - 24 * 3600000);
+  const lastCall = await prisma.callLog.findFirst({
+    where: { action: 'CALL_RECEIVED', timestamp: { gt: since } },
+    orderBy: { timestamp: 'desc' },
+  });
+  if (!lastCall) return; // nothing new to report
+  if (Date.now() - lastCall.timestamp.getTime() < config.ownerCalls.updateQuietMinutes * 60000) return; // session still running
+
+  const data = await buildUpdateData({ since });
+  await prisma.ownerCall.create({ data: { type: 'UPDATE', data: { ...data, auto: true, since: since.toISOString() } } });
+  await logAction(null, 'OWNER_CALL_UPDATE_QUEUED', `Calling session finished — Jarvis will call with ${data.total_calls} new call results`);
+}
+
+/** Mark campaigns finished when Sarvam says they ended, so the summary call fires. */
+let lastCampaignPoll = 0;
+async function pollSarvamCampaigns() {
+  if (!config.isConfigured.sarvam || Date.now() - lastCampaignPoll < 10 * 60000) return;
+  lastCampaignPoll = Date.now();
+  const running = await prisma.campaign.findMany({ where: { status: 'RUNNING', sarvam_campaign_id: { not: null } } });
+  if (!running.length) return;
+  const { getSarvamCampaign, triggerSummaryCall } = require('./sarvam');
+  const { recomputeCampaignStats } = require('./pipeline');
+  for (const c of running) {
+    try {
+      const remote = await getSarvamCampaign(c.sarvam_campaign_id);
+      if (['ended', 'cancelled', 'completed'].includes(String(remote.status).toLowerCase())) {
+        await recomputeCampaignStats(c.id);
+        await triggerSummaryCall(c.id);
+      }
+    } catch (err) {
+      await logError(null, 'CAMPAIGN_STATUS_POLL', err);
+    }
+  }
+}
+
 /** Place the next queued call (one at a time) and time out calls whose result never arrived. */
 let processing = false;
 async function processQueue() {
@@ -203,6 +258,8 @@ async function processQueue() {
     for (const s of stale) await scheduleRetryOrManual(s.id, 'No call result received');
 
     if (!config.isConfigured.ownerCalls) return;
+    await pollSarvamCampaigns().catch((err) => logError(null, 'CAMPAIGN_STATUS_POLL', err));
+    await maybeAutoUpdate().catch((err) => logError(null, 'AUTO_UPDATE', err));
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;
 
     // "Call me now" updates go first and ignore calling hours (Harsha asked for them).
@@ -329,9 +386,21 @@ const STAGE_WORDS = {
 };
 
 /** Spoken status for the "Jarvis, call me now" update: latest campaign + website progress. */
-async function buildUpdateData() {
-  const campaign = await prisma.campaign.findFirst({ orderBy: { created_at: 'desc' } });
-  const where = campaign ? { campaign_id: campaign.id } : {};
+async function buildUpdateData({ since = null } = {}) {
+  let where;
+  let campaignName = null;
+  if (since) {
+    // Only the businesses called since the last update to Harsha.
+    const logs = await prisma.callLog.findMany({
+      where: { action: 'CALL_RECEIVED', timestamp: { gt: since }, client_id: { not: null } },
+      select: { client_id: true },
+    });
+    where = { id: { in: [...new Set(logs.map((l) => l.client_id))] } };
+  } else {
+    const campaign = await prisma.campaign.findFirst({ orderBy: { created_at: 'desc' } });
+    where = campaign ? { campaign_id: campaign.id } : {};
+    campaignName = campaign?.name || 'no campaign yet';
+  }
   const groups = await prisma.client.groupBy({ by: ['call_outcome'], where, _count: { _all: true } });
   const n = (o) => groups.find((g) => g.call_outcome === o)?._count._all || 0;
   const booked = await prisma.client.findMany({ where: { ...where, call_outcome: 'BOOKED' }, select: { business_name: true, meeting_link: true } });
@@ -348,7 +417,8 @@ async function buildUpdateData() {
   const pending = await prisma.ownerCall.count({ where: { type: { in: ['QUOTATION', 'WEBSITE'] }, status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } } });
 
   return {
-    campaign_name: campaign?.name || 'no campaign yet',
+    campaign_name: campaignName || '-',
+    period: since ? 'Since my last update' : '-',
     total_calls: n('BOOKED') + n('REJECTED') + n('NO_ANSWER') + n('CALLBACK_LATER'),
     booked_count: n('BOOKED'),
     booked_names: booked.map((c) => c.business_name).join(', ') || 'none',
@@ -391,6 +461,6 @@ function startOwnerCallWorker() {
 }
 
 module.exports = {
-  requestUpdateCall, buildUpdateData, buildSpokenMessage, buildJarvisContext,
+  requestUpdateCall, buildUpdateData, buildSpokenMessage, buildJarvisContext, maybeAutoUpdate,
   requestOwnerCall, processQueue, handleOwnerWebhook, decide, retryOwnerCall, startOwnerCallWorker, parseDecision, buildVariables,
 };

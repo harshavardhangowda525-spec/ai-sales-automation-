@@ -29,7 +29,10 @@ function JarvisCall() {
   }
   return (
     <>
-      <button className="btn-primary" onClick={show}><Icon name="phone" /> Jarvis, call me now</button>
+      <div className="text-right">
+        <button className="btn-ghost" onClick={show}><Icon name="phone" /> Call me now</button>
+        <p className="mt-1 text-[11px] text-gray-500">Jarvis calls you automatically after each calling session</p>
+      </div>
       {open && (
         <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-4" onClick={() => setOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} className="card w-full max-w-lg p-6">

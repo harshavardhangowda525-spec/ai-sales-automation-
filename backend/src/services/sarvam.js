@@ -199,4 +199,10 @@ async function triggerSummaryCall(campaignId) {
   return { ownerCallId: call.id, variables, mock: call.status === 'DONE' };
 }
 
-module.exports = { startCampaign, triggerSummaryCall, placeOutboundCall };
+/** Read a Sarvam campaign (status: scheduled | active | paused | ended | cancelled). */
+async function getSarvamCampaign(sarvamCampaignId) {
+  const { orgId, workspaceId } = base();
+  return sarvamRequest('GET', `/scheduling/v1/orgs/${orgId}/workspaces/${workspaceId}/campaigns/${sarvamCampaignId}`);
+}
+
+module.exports = { startCampaign, triggerSummaryCall, placeOutboundCall, getSarvamCampaign };

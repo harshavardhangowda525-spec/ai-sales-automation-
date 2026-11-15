@@ -35,6 +35,9 @@ const config = {
     maxAttempts: Number(env('OWNER_CALL_MAX_ATTEMPTS', 2)),
     retryMinutes: Number(env('OWNER_CALL_RETRY_MINUTES', 15)),
     resultTimeoutMinutes: Number(env('OWNER_CALL_TIMEOUT_MINUTES', 15)),
+    // Jarvis calls automatically once a calling session goes quiet and there's something new
+    autoUpdate: env('OWNER_AUTO_UPDATE', 'true') !== 'false',
+    updateQuietMinutes: Number(env('OWNER_UPDATE_QUIET_MINUTES', 10)),
   },
   ownerWhatsApp: env('HARSHAVARDHAN_WHATSAPP', env('HARSHAVARDHAN_PHONE')),
   businessEmail: env('BUSINESS_EMAIL', 'akagaminodfshanks@gmail.com'),
