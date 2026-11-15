@@ -144,6 +144,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      VERCEL_TOKEN: \${{ secrets.VERCEL_TOKEN }}
+      VERCEL_SCOPE: \${{ secrets.VERCEL_SCOPE }}
     steps:
       - uses: actions/checkout@v4
 
@@ -153,15 +156,38 @@ jobs:
           claude_code_oauth_token: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: \${{ secrets.GITHUB_TOKEN }}
           prompt: \${{ inputs.prompt }}
-          claude_args: --max-turns 250 --allowedTools "Bash,Edit,Write,Read,Glob,Grep,WebFetch"
+          claude_args: --max-turns 250 --permission-mode acceptEdits --allowedTools "Bash,Edit,Write,Read,Glob,Grep,WebFetch"
+
+      - name: Keep Claude's work log (3 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-log
+          path: \${{ runner.temp }}/claude-execution-output.json
+          retention-days: 3
+          if-no-files-found: ignore
 
       - name: Commit and push the work
-        if: always()
         run: |
           git config user.name "Claude (Infinity Web & Apps)"
           git config user.email "claude-build@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then echo "Nothing new to commit"; else git commit -m "Claude build #\${{ github.run_number }}" && git push; fi
+
+      - name: Check that real project files exist
+        run: |
+          n=$(git ls-files | grep -vE '^(CLAUDE\\.md|README\\.md|PLAN\\.md|\\.github/)' | wc -l)
+          echo "Project files: $n"
+          if [ "$n" -lt 3 ]; then echo "::error::Claude did not create the project files"; exit 1; fi
+
+      - name: Deploy a live preview to Vercel
+        if: env.VERCEL_TOKEN != ''
+        run: |
+          SCOPE=""
+          if [ -n "$VERCEL_SCOPE" ]; then SCOPE="--scope $VERCEL_SCOPE"; fi
+          URL=$(npx --yes vercel@latest deploy --prod --yes --token "$VERCEL_TOKEN" $SCOPE 2>vercel.err | tail -n 1)
+          cat vercel.err | tail -n 20
+          case "$URL" in https://*) echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"; echo "Live preview: $URL";; *) echo "::warning::Vercel deploy did not return a URL";; esac
 
       - name: Tell the Infinity dashboard
         if: always()
@@ -172,7 +198,7 @@ jobs:
         run: |
           if [ -n "$CALLBACK_URL" ]; then
             curl -sS -X POST "$CALLBACK_URL" -H 'Content-Type: application/json' \\
-              -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"status\\":\\"$STATUS\\",\\"run_url\\":\\"$RUN_URL\\"}" || true
+              -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"status\\":\\"$STATUS\\",\\"run_url\\":\\"$RUN_URL\\",\\"preview_url\\":\\"\${PREVIEW_URL:-}\\"}" || true
           fi
 `;
 
@@ -189,10 +215,14 @@ async function setRepoSecret(fullName, name, value) {
 }
 
 /** Make sure the repo has the build workflow and its two secrets. */
-async function ensureBuildSetup(fullName, { claudeToken, callbackUrl }) {
-  await putFile(fullName, '.github/workflows/claude-build.yml', BUILD_WORKFLOW, 'Add Claude build workflow');
+async function ensureBuildSetup(fullName, { claudeToken, callbackUrl, vercelToken, vercelScope }) {
+  await putFile(fullName, '.github/workflows/claude-build.yml', BUILD_WORKFLOW, 'Update Claude build workflow');
   await setRepoSecret(fullName, 'CLAUDE_CODE_OAUTH_TOKEN', claudeToken);
   await setRepoSecret(fullName, 'INFINITY_CALLBACK_URL', callbackUrl);
+  if (vercelToken) {
+    await setRepoSecret(fullName, 'VERCEL_TOKEN', vercelToken);
+    if (vercelScope) await setRepoSecret(fullName, 'VERCEL_SCOPE', vercelScope);
+  }
 }
 
 /** Start the build workflow with a prompt. */

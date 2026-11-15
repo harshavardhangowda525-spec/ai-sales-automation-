@@ -17,6 +17,9 @@ function buildPrompt(client, { kind = 'website', instructions }) {
     'Follow the "How to work" section: write or update PLAN.md first, then build, then complete the README and the done checklist.',
     kind === 'mobile' ? 'Include clear steps in the README to run it with Expo Go and to make Android/iOS builds with EAS.' : null,
     'If the project already exists, continue from where it is and improve it rather than starting over.',
+    'IMPORTANT: create the real project files in this repository NOW with the Write tool — do not stop after planning, do not ask questions, and do not just describe what you would do. The run fails if no project files exist.',
+    'It will be deployed automatically to Vercel with zero configuration: use a standard setup (e.g. Vite + React, Next.js, or plain HTML/CSS/JS), keep it at the repository root, make sure `npm install && npm run build` succeeds if it has a package.json, and run the build once to check before you finish.',
+    'Finish by listing the files you created.',
     instructions ? `Latest instructions from the founder (take priority over older ones): ${instructions}` : null,
     'Work fully autonomously — there is no one to answer questions. Make sensible decisions and note them in PLAN.md.',
   ].filter(Boolean).join('\n\n');
@@ -45,6 +48,8 @@ async function requestBuild(clientId, { kind = 'website', instructions = null, s
   await ensureBuildSetup(client.github_repo, {
     claudeToken: config.claudeCodeToken,
     callbackUrl: `${config.publicBaseUrl}/webhook/github/build-done${secret}`,
+    vercelToken: config.vercel.token,
+    vercelScope: config.vercel.scope,
   });
   // GitHub needs a moment to register a just-added workflow before it can be dispatched.
   let runsUrl;
@@ -86,7 +91,8 @@ async function requestBuild(clientId, { kind = 'website', instructions = null, s
 }
 
 /** Callback from the workflow's last step. */
-async function handleBuildDone({ repo, status, run_url: runUrl }) {
+async function handleBuildDone({ repo, status, run_url: runUrl, preview_url: previewRaw }) {
+  const previewUrl = /^https:\/\//.test(String(previewRaw || '')) ? String(previewRaw) : null;
   const client = await prisma.client.findFirst({ where: { github_repo: repo } });
   if (!client) return { ignored: true };
   const ok = status === 'success';
@@ -96,11 +102,12 @@ async function handleBuildDone({ repo, status, run_url: runUrl }) {
       build_status: ok ? 'success' : 'failure',
       build_run_url: runUrl || client.build_run_url,
       build_finished_at: new Date(),
+      ...(previewUrl ? { website_preview_url: previewUrl } : {}),
       ...(ok && client.website_stage === 'IN_DEVELOPMENT' ? { website_stage: 'IN_REVIEW' } : {}),
     },
   });
   await logAction(client.id, ok ? 'CLAUDE_BUILD_DONE' : 'CLAUDE_BUILD_ERROR',
-    ok ? `Claude finished building — code in ${client.github_repo}. Run: ${runUrl}` : `Claude build ${status} — see ${runUrl}`);
+    ok ? `Claude finished building — code in ${client.github_repo}${previewUrl ? `, live preview ${previewUrl}` : ''}. Run: ${runUrl}` : `Claude build ${status} — see ${runUrl}`);
 
   // Jarvis calls the founder with the news.
   try {
@@ -109,7 +116,7 @@ async function handleBuildDone({ repo, status, run_url: runUrl }) {
       clientId: client.id,
       data: {
         notice: ok
-          ? `Claude has finished building the project for ${client.business_name}. The code is in its GitHub repo and it's waiting for your review.${client.website_preview_url ? ' The preview link is in the dashboard.' : ''}`
+          ? `Claude has finished building the project for ${client.business_name}. ${previewUrl ? "It's live on a preview link — I've sent it to you on WhatsApp." : "The code is in its GitHub repo and it's waiting for your review."}`
           : `Claude's build for ${client.business_name} didn't finish — it ${status}. The details are in the dashboard.`,
       },
     });
@@ -122,12 +129,13 @@ async function handleBuildDone({ repo, status, run_url: runUrl }) {
   // WhatsApp the founder the links too.
   if (linked && config.ownerPhone) {
     await waLinked.sendText(config.ownerPhone, ok
-      ? `✅ Sir, Claude finished building *${client.business_name}*.\nCode: https://github.com/${repo}\nRun: ${runUrl}`
+      ? `✅ Sir, Claude finished building *${client.business_name}*.${previewUrl ? `\n🌐 Live preview: ${previewUrl}` : ''}\nCode: https://github.com/${repo}\nRun: ${runUrl}`
       : `⚠️ Sir, Claude's build for *${client.business_name}* ${status}. Details: ${runUrl}`).catch(() => {});
   }
   // Tell the client their website is ready to review (only on success, only with a link to review).
-  const reviewLink = config.clientPortalUrl || client.website_preview_url;
-  if (ok && linked && reviewLink) {
+  const reviewLink = previewUrl || client.website_preview_url || config.clientPortalUrl;
+  const hasPhone = String(client.phone_number || '').replace(/\D/g, '').length >= 10;
+  if (ok && linked && reviewLink && hasPhone) {
     const name = client.contact_name?.split(' ')[0] || 'there';
     try {
       await waLinked.sendText(client.phone_number, `Hi ${name}! 🎉
@@ -143,8 +151,8 @@ Have a look and tell us anything you'd like changed — just reply here. 😊
     } catch (err) {
       await logAction(client.id, 'WHATSAPP_SEND_ERROR', `Couldn't tell the client the site is ready: ${err.message}`);
     }
-  } else if (ok && !reviewLink) {
-    await logAction(client.id, 'CLIENT_REVIEW_NOT_SENT', 'Build done, but no client portal URL or preview link to send the client yet');
+  } else if (ok && (!reviewLink || !hasPhone)) {
+    await logAction(client.id, 'CLIENT_REVIEW_NOT_SENT', !hasPhone ? 'Build done — no phone number saved for the client, so they were not messaged' : 'Build done, but no preview link to send the client yet');
   }
   return { ok: true };
 }
