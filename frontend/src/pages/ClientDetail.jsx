@@ -6,6 +6,7 @@ import RescheduleModal from '../components/RescheduleModal';
 import WebsiteReadyModal from '../components/WebsiteReadyModal';
 import { ApprovalRow } from '../components/Approvals';
 import WebsiteBuild from '../components/WebsiteBuild';
+import { proposalMessage, websiteMessage, whatsappLink } from '../lib/whatsapp';
 import { useToast } from '../components/Toast';
 import usePolling from '../lib/usePolling';
 import { api } from '../lib/api';
@@ -62,6 +63,15 @@ export default function ClientDetail() {
     }
   }
 
+  function sendWhatsApp(kind) {
+    const text = kind === 'website' ? websiteMessage(c) : proposalMessage(c);
+    // Open first (synchronously) so the browser doesn't block the new tab, then record it.
+    window.open(whatsappLink(c.phone_number, text), '_blank', 'noopener');
+    api(`/api/clients/${id}/whatsapp-sent`, { method: 'POST', body: { kind } })
+      .then(() => { toast('WhatsApp opened with the message — press Send there', 'success'); reload(); })
+      .catch((err) => toast(err.message, 'error'));
+  }
+
   const errors = c.call_logs.filter((l) => l.action.endsWith('_ERROR'));
 
   return (
@@ -79,10 +89,15 @@ export default function ClientDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <a href={`https://wa.me/${c.phone_number.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="btn-ghost">WhatsApp</a>
+          <button className="btn-primary" onClick={() => sendWhatsApp('proposal')} title="Opens your WhatsApp with the proposal + meeting message typed in">
+            <Icon name="send" /> Send on WhatsApp
+          </button>
+          {c.website_url && (
+            <button className="btn-ghost" onClick={() => sendWhatsApp('website')} title="Opens your WhatsApp with the website link message typed in">Send website link</button>
+          )}
           <button className="btn-ghost" onClick={() => setRescheduling(true)}><Icon name="calendar" /> Reschedule</button>
           <button className="btn-ghost" onClick={() => setWebsiteOpen(true)}><Icon name="external" /> Website ready</button>
-          <button className="btn-primary" disabled={busy === 'resend'} onClick={resend}><Icon name="send" /> {busy === 'resend' ? 'Sending…' : 'Resend proposal'}</button>
+          <button className="btn-ghost" disabled={busy === 'resend'} onClick={resend} title="Regenerates the PDF and sends it via the WhatsApp API (needs an approved template)">{busy === 'resend' ? 'Sending…' : 'Regenerate proposal'}</button>
         </div>
       </div>
 
@@ -183,7 +198,7 @@ export default function ClientDetail() {
                   <a href={c.proposal_url} target="_blank" rel="noreferrer" className="btn-ghost btn-sm">Open</a>
                   <a href={`${c.proposal_url}?download=1`} className="btn-ghost btn-sm">Download</a>
                 </div>
-                <p className="mt-3 text-xs">{c.proposal_sent ? '✓ Sent on WhatsApp' : 'Not sent yet — waiting for your approval'}</p>
+                <p className="mt-3 text-xs">{c.proposal_sent ? '✓ Sent on WhatsApp' : 'Not sent yet — use "Send on WhatsApp" above'}</p>
                 {c.proposals?.length > 1 && <p className="mt-1 text-xs text-gray-500">{c.proposals.length} versions · latest {c.proposals[0].number}</p>}
               </>
             ) : <p className="text-sm text-gray-500">No proposal generated yet.</p>}

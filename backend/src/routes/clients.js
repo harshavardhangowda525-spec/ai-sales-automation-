@@ -158,6 +158,35 @@ router.post('/:id/reschedule', async (req, res, next) => {
   }
 });
 
+// POST /api/clients/:id/whatsapp-sent — Harsha sent the pre-filled message from his own WhatsApp
+router.post('/:id/whatsapp-sent', async (req, res, next) => {
+  try {
+    const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    const what = req.body?.kind === 'website' ? 'website link' : 'proposal & meeting link';
+    const data = req.body?.kind === 'website'
+      ? { website_sent: true, website_stage: 'DELIVERED' }
+      : {
+        proposal_sent: true,
+        ...(['CONVERTED', 'LOST'].includes(client.portal_status) ? {} : { portal_status: client.meeting_link ? 'MEETING_SCHEDULED' : 'PROPOSAL_SENT' }),
+      };
+    const updated = await prisma.client.update({ where: { id: client.id }, data });
+    // Close any approval still waiting for the same thing — it's been handled by hand.
+    await prisma.ownerCall.updateMany({
+      where: {
+        client_id: client.id,
+        type: req.body?.kind === 'website' ? 'WEBSITE' : 'QUOTATION',
+        status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] },
+      },
+      data: { status: 'SENT', decided_at: new Date(), decision_note: 'Sent from your own WhatsApp' },
+    });
+    await logAction(client.id, 'WHATSAPP_SENT_MANUAL', `${what} sent from your WhatsApp to ${client.phone_number}`);
+    res.json({ ok: true, client: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/clients/:id/website-prompt — (re)write the Claude Code build prompt
 router.post('/:id/website-prompt', async (req, res, next) => {
   try {
