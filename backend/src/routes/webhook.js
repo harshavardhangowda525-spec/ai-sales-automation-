@@ -67,11 +67,18 @@ router.post('/sarvam/owner', verifySecret, async (req, res) => {
  *   business data, only an instruction to take a polite message; the callback is logged.
  * Accepts GET or POST; the caller number is read from common field names.
  */
+/** Caller number from any shape Sarvam may send (incl. on_start: user_information.phone_number). */
+function callerFrom(src) {
+  const info = src.user_information || src.on_start_input?.user_information || src.input?.on_start_input?.user_information;
+  const fromInfo = info?.phone_number ? `${info.country_code ? `+${String(info.country_code).replace(/\D/g, '')}` : ''}${String(info.phone_number).replace(/^0+/, '')}` : '';
+  return src.caller || src.user_phone_number || src.caller_phone_number || src.phone_number || src.from || src.From
+    || src.user?.phone_number || src.user_config?.user_phone_number || fromInfo || '';
+}
+
 async function jarvisContext(req, res) {
   try {
     const src = { ...(req.query || {}), ...(req.body || {}) };
-    const raw = src.user_phone_number || src.caller_phone_number || src.phone_number || src.caller
-      || src.from || src.From || src.user?.phone_number || src.user_config?.user_phone_number || '';
+    const raw = callerFrom(src);
     const caller = raw ? toE164(String(raw)) : null;
     const owner = config.ownerPhone ? toE164(config.ownerPhone) : null;
 
@@ -83,10 +90,12 @@ async function jarvisContext(req, res) {
         orderBy: { called_at: 'desc' },
       });
       if (active?.data?.spoken_message) {
-        return res.json({ harsha_message: active.data.spoken_message, jarvis_context: context, caller_is_owner: 'yes', direction: 'outbound' });
+        const v = { harsha_message: active.data.spoken_message, jarvis_context: context };
+        return res.json({ ...v, agent_variables: v, caller_is_owner: 'yes', direction: 'outbound' });
       }
       await logAction(null, 'JARVIS_INBOUND_CALL', 'Sir called Jarvis — latest context loaded');
-      return res.json({ harsha_message: '-', jarvis_context: context, caller_is_owner: 'yes', direction: 'inbound' });
+      const v = { harsha_message: '-', jarvis_context: context };
+      return res.json({ ...v, agent_variables: v, caller_is_owner: 'yes', direction: 'inbound' });
     }
 
     let note = 'unknown number';
@@ -96,14 +105,12 @@ async function jarvisContext(req, res) {
       await logAction(client?.id || null, 'INBOUND_CALLBACK',
         `${note} called the business number — Jarvis took a message`);
     }
-    return res.json({
-      harsha_message: '-',
-      caller_is_owner: 'no',
-      jarvis_context: `THE CALLER IS NOT SIR. This is ${note === 'unknown number' ? 'an unknown caller' : note}, `
+    const notSir = `THE CALLER IS NOT SIR. This is ${note === 'unknown number' ? 'an unknown caller' : note}, `
         + 'probably returning a call from Infinity Web & Apps. Do not share any information about sir, '
         + 'clients, prices or the business pipeline. Politely say you are the assistant at Infinity Web & Apps, '
-        + 'ask their name and what they need, say the team will call them back shortly, then end the call.',
-    });
+        + 'ask their name and what they need, say the team will call them back shortly, then end the call.';
+    const v = { harsha_message: '-', jarvis_context: notSir };
+    return res.json({ ...v, agent_variables: v, caller_is_owner: 'no' });
   } catch (err) {
     await logError(null, 'JARVIS_CONTEXT', err);
     // Fail safe: no business data on errors.
@@ -141,7 +148,7 @@ function describeClient(c, { full = false } = {}) {
 async function jarvisLookup(req, res) {
   try {
     const src = { ...(req.query || {}), ...(req.body || {}) };
-    const raw = src.caller || src.user_phone_number || src.caller_phone_number || src.phone_number || '';
+    const raw = callerFrom(src);
     const caller = raw ? toE164(String(raw)) : null;
     const owner = config.ownerPhone ? toE164(config.ownerPhone) : null;
     if (!caller || caller !== owner) {
@@ -231,7 +238,7 @@ const { istParts, istDate } = require('../lib/time');
 
 function toolInput(req) {
   const src = { ...(req.query || {}), ...(req.body || {}) };
-  const raw = src.caller || src.user_phone_number || src.caller_phone_number || src.phone_number || '';
+  const raw = callerFrom(src);
   const caller = raw ? toE164(String(raw)) : null;
   const owner = config.ownerPhone ? toE164(config.ownerPhone) : null;
   return { src, isOwner: Boolean(caller && owner && caller === owner) };
@@ -378,6 +385,13 @@ router.post('/github/build-done', verifySecret, async (req, res) => {
   }
 });
 
+// Log every Jarvis tool request (without bodies) so tool usage is visible in the activity feed.
+router.use(/^\/sarvam\/jarvis-/, (req, res, next) => {
+  const src = { ...(req.query || {}), ...(req.body || {}) };
+  const tool = req.path.split('/').pop();
+  logAction(null, 'JARVIS_TOOL', `Jarvis used ${tool}${callerFrom(src) ? '' : ' (no caller number received)'}`).catch(() => {});
+  next();
+});
 router.get('/sarvam/jarvis-context', verifySecret, jarvisContext);
 router.post('/sarvam/jarvis-context', verifySecret, jarvisContext);
 
