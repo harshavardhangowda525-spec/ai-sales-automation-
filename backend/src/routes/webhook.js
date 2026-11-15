@@ -10,6 +10,14 @@ const { formatMeetingTime } = require('../lib/time');
 
 const router = express.Router();
 
+// Log every Jarvis tool request (without bodies) so tool usage is visible in the activity feed.
+router.use(/^\/sarvam\/jarvis-/, (req, res, next) => {
+  const src = { ...(req.query || {}), ...(req.body || {}) };
+  const tool = req.path.split('/').pop();
+  logAction(null, 'JARVIS_TOOL', `Jarvis used ${tool}${callerFrom(src) ? '' : ' (no caller number received)'}`).catch(() => {});
+  next();
+});
+
 /**
  * Optional shared-secret check. Sarvam does not sign webhooks, so we put a secret in the URL
  * (…/webhook/sarvam?secret=XYZ) or accept it in an x-webhook-secret header.
@@ -385,13 +393,6 @@ router.post('/github/build-done', verifySecret, async (req, res) => {
   }
 });
 
-// Log every Jarvis tool request (without bodies) so tool usage is visible in the activity feed.
-router.use(/^\/sarvam\/jarvis-/, (req, res, next) => {
-  const src = { ...(req.query || {}), ...(req.body || {}) };
-  const tool = req.path.split('/').pop();
-  logAction(null, 'JARVIS_TOOL', `Jarvis used ${tool}${callerFrom(src) ? '' : ' (no caller number received)'}`).catch(() => {});
-  next();
-});
 router.get('/sarvam/jarvis-context', verifySecret, jarvisContext);
 router.post('/sarvam/jarvis-context', verifySecret, jarvisContext);
 
