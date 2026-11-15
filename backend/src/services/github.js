@@ -172,7 +172,11 @@ jobs:
           git config user.name "Claude (Infinity Web & Apps)"
           git config user.email "claude-build@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then echo "Nothing new to commit"; else git commit -m "Claude build #\${{ github.run_number }}" && git push; fi
+          if git diff --cached --quiet; then echo "No uncommitted changes"; else git commit -m "Claude build #\${{ github.run_number }}"; fi
+          # Claude often commits by itself — always push whatever is on HEAD to the default branch.
+          git pull --rebase origin "\${{ github.event.repository.default_branch }}" || true
+          git push origin "HEAD:\${{ github.event.repository.default_branch }}"
+          echo "Files in the repo now: $(git ls-files | wc -l)"
 
       - name: Check that real project files exist
         run: |

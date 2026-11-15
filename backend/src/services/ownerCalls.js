@@ -92,13 +92,37 @@ async function buildJarvisContext() {
   if (callbacks.length) {
     lines.push(`Asked for a callback: ${callbacks.map((c) => `${c.business_name}${c.preferred_time ? ` (${c.preferred_time})` : ''}`).join(', ')}.`);
   }
+  const projects = await prisma.client.findMany({
+    where: { OR: [{ website_stage: { not: 'NOT_STARTED' } }, { github_repo: { not: null } }] },
+    orderBy: { updated_at: 'desc' }, take: 8,
+  });
+  if (projects.length) {
+    const bs = { requested: 'starting', running: 'Claude is building it right now', success: 'last build finished', failure: 'last build FAILED' };
+    lines.push('Website / app projects:');
+    for (const c of projects) {
+      lines.push(`- ${c.business_name}: ${stage[c.website_stage]}${c.build_status ? `; ${bs[c.build_status] || c.build_status}` : ''}`
+        + `${c.website_preview_url ? `; live preview ${c.website_preview_url}` : '; no live link yet'}`);
+    }
+  }
   const schedule = await scheduleText({ days: 7 });
   lines.push(schedule ? `Sir's schedule, next 7 days (Google Calendar + booked consultations): ${schedule}.` : "Sir's calendar is clear for the next 7 days.");
   lines.push(pending.length
     ? `Waiting for your approval: ${pending.map((p) => `${p.type === 'QUOTATION' ? 'quotation' : 'website link'} for ${p.client?.business_name}`).join(', ')}.`
     : 'Nothing is waiting for approval.');
-  return lines.join('\n').slice(0, 3500);
+  const body = lines.join('\n').slice(0, 3300);
+  return `${body}\n\n${JARVIS_RULES}`;
 }
+
+// Appended to the context every call, so behaviour can be fixed here without editing the agent in Sarvam.
+const JARVIS_RULES = [
+  'HOW TO ACT (follow strictly):',
+  '- When sir says build, rebuild, make, deploy, publish, "make it live" or "send me the link" for a website/app: call build_project RIGHT AWAY. Building = deploying: when the build finishes it goes live on a preview link automatically, sir gets the link on WhatsApp and you call him.',
+  '- If sir does not name the client and only one project is listed above, use that one — do not ask "which client?". Ask only if several projects could match, and never ask the same question twice: act on your best guess.',
+  '- Speech-to-text mishears names. Map what you hear to the closest name listed above (e.g. "Masil House" = Muscle House). Never create a new client from a misheard name.',
+  '- Never say something is done, being deployed or "coordinated" unless a tool just told you so. If you have no tool for it, say so plainly and suggest what you can do.',
+  '- Never invent people or names. Messages for sir go only to sir.',
+  '- If sir pauses mid-sentence, wait for him to finish; keep replies short (1-2 sentences).',
+].join('\n');
 
 /** What Jarvis says on the call — written here so the agent doesn't need any extra variables. */
 function buildSpokenMessage(call, vars) {

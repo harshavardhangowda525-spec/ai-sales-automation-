@@ -269,10 +269,47 @@ async function findClient(name) {
   if (whole) return whole;
   const words = q.split(/\s+/).filter((w) => w.length > 2 && !/^(the|and|for|website|site|app|mobile|client)$/i.test(w));
   if (!words.length) return null;
-  return prisma.client.findFirst({
+  const all = await prisma.client.findFirst({
     where: { AND: words.map((w) => ({ business_name: { contains: w, mode: 'insensitive' } })) },
     orderBy: { updated_at: 'desc' },
   });
+  if (all) return all;
+  // 3) speech-to-text often mishears names ("Masil House" for "Muscle House") — closest-sounding name.
+  const recent = await prisma.client.findMany({ orderBy: { updated_at: 'desc' }, take: 300, select: { id: true, business_name: true } });
+  let best = null;
+  for (const c of recent) {
+    const score = nameSimilarity(q, c.business_name);
+    if (!best || score > best.score) best = { id: c.id, score };
+  }
+  return best && best.score >= 0.6 ? prisma.client.findUnique({ where: { id: best.id } }) : null;
+}
+
+function levenshtein(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/** 0..1 — how alike two spoken business names are (ignores spaces, case and "the"). */
+function nameSimilarity(a, b) {
+  const norm = (x) => String(x || '').toLowerCase().replace(/\b(the|website|site|app)\b/g, '').replace(/[^a-z0-9]/g, '');
+  const x = norm(a); const y = norm(b);
+  if (!x || !y) return 0;
+  return 1 - levenshtein(x, y) / Math.max(x.length, y.length);
+}
+
+/** The project sir most likely means when he doesn't name one: the only one in progress. */
+async function onlyActiveProject() {
+  const active = await prisma.client.findMany({
+    where: { OR: [{ website_stage: { in: ['PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW'] } }, { build_status: { in: ['requested', 'running'] } }] },
+    orderBy: { updated_at: 'desc' }, take: 2,
+  });
+  return active.length === 1 ? active[0] : null;
 }
 
 /** Parse "2026-11-16T16:00", "tomorrow 4pm", "monday 11:30 am", "today 6 pm" into a Date (IST). */
@@ -367,9 +404,11 @@ async function jarvisWhatsApp(req, res) {
 async function jarvisBuild(req, res) {
   const { src, isOwner } = toolInput(req);
   if (!isOwner) return res.json({ answer: 'Only sir can start builds.' });
-  const wanted = src.client || src.name || src.business_name;
-  if (!wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
-  let client = await findClient(wanted).catch(() => null);
+  const wanted = String(src.client || src.name || src.business_name || '').trim();
+  let client = wanted && !/^(-|none|null|my client|the client|it|this|that)$/i.test(wanted)
+    ? await findClient(wanted).catch(() => null)
+    : await onlyActiveProject().catch(() => null);
+  if (!client && !wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
   let added = '';
   if (!client) {
     // New project — add it as a client first, with what sir described as the requirements.
@@ -393,7 +432,7 @@ async function jarvisBuild(req, res) {
       } catch { /* ignore */ }
     });
   const label = { website: 'website', app: 'web app', mobile: 'mobile app' }[kind];
-  return res.json({ answer: `On it, sir. ${added}Claude is starting the ${label} for ${client.business_name} now — I'll call you when it's built.` });
+  return res.json({ answer: `Done, sir — ${added}Claude has started building the ${label} for ${client.business_name}. When it's ready it goes live on a preview link automatically, I'll WhatsApp you the link and call you.` });
 }
 
 // POST /webhook/sarvam/jarvis-add-client { business_name, contact_name?, phone?, plan?, requirements?, notes?, caller }
@@ -488,3 +527,4 @@ router.post('/sarvam/jarvis-context', verifySecret, jarvisContext);
 
 module.exports = router;
 module.exports.parseWhen = parseWhen;
+module.exports.nameSimilarity = nameSimilarity;
