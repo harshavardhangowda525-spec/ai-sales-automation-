@@ -105,6 +105,7 @@ const server = app.listen(config.port, () => {
 
 const shutdown = async () => {
   server.close();
+  await waLinked.stop().catch(() => {});
   await prisma.$disconnect();
   process.exit(0);
 };

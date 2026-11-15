@@ -11,6 +11,15 @@ const prisma = require('../lib/prisma');
 const { logAction, logError } = require('../lib/logger');
 
 const logger = pino({ level: 'silent' });
+const crypto = require('crypto');
+
+// Only ONE server may be connected as this linked device. During a Render deploy the old and new
+// instance overlap; if both connect they overwrite each other's encryption keys and the phone shows
+// "Waiting for this message". A lease row in wa_session decides who holds the connection.
+const INSTANCE = crypto.randomBytes(6).toString('hex');
+const LEASE_KEY = 'lease';
+const LEASE_TTL_MS = 45000;
+let leaseTimer = null;
 
 const state = {
   sock: null,
@@ -65,6 +74,59 @@ async function usePostgresAuthState() {
   };
 }
 
+async function readLease() {
+  const row = await prisma.waSession.findUnique({ where: { key: LEASE_KEY } });
+  try { return row ? JSON.parse(row.value) : null; } catch { return null; }
+}
+async function tryLease() {
+  const cur = await readLease();
+  if (cur && cur.id !== INSTANCE && Date.now() - cur.at < LEASE_TTL_MS) return false;
+  await writeKey(LEASE_KEY, { id: INSTANCE, at: Date.now() });
+  return true;
+}
+/** Wait (up to ~3 min) until no other instance holds the WhatsApp connection. */
+async function waitForLease() {
+  for (let i = 0; i < 36; i++) {
+    if (await tryLease()) return true;
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return tryLease();
+}
+function startLeaseHeartbeat() {
+  if (leaseTimer) return;
+  leaseTimer = setInterval(async () => {
+    try {
+      const cur = await readLease();
+      if (cur && cur.id !== INSTANCE && Date.now() - cur.at < LEASE_TTL_MS) {
+        // Another instance took over — step aside without logging out.
+        clearInterval(leaseTimer); leaseTimer = null;
+        state.stopping = true;
+        state.sock?.end(undefined);
+        return;
+      }
+      await writeKey(LEASE_KEY, { id: INSTANCE, at: Date.now() });
+    } catch { /* retry next tick */ }
+  }, 15000);
+}
+
+// Sent messages are kept for 3 days so that when the phone can't decrypt one and asks for a
+// retry, we can re-send it (without this the message stays "Waiting for this message").
+async function rememberMessage(sent) {
+  if (!sent?.key?.id || !sent.message) return;
+  await writeKey(`msg-${sent.key.id}`, sent.message).catch(() => {});
+  if (Math.random() < 0.05) {
+    await prisma.waSession.deleteMany({ where: { key: { startsWith: 'msg-' }, updated_at: { lt: new Date(Date.now() - 3 * 86400000) } } }).catch(() => {});
+  }
+}
+async function getStoredMessage(key) {
+  const m = await readKey(`msg-${key.id}`).catch(() => null);
+  return m || undefined;
+}
+const retryCounts = new Map();
+const msgRetryCounterCache = {
+  get: (k) => retryCounts.get(k), set: (k, v) => { retryCounts.set(k, v); }, del: (k) => { retryCounts.delete(k); }, flushAll: () => retryCounts.clear(),
+};
+
 async function hasSession() {
   const creds = await readKey('creds');
   return Boolean(creds?.registered || creds?.me);
@@ -76,6 +138,9 @@ async function connect() {
   state.connecting = (async () => {
     state.status = 'connecting';
     state.lastError = null;
+    state.stopping = false;
+    if (!(await waitForLease())) throw new Error('Another server instance is still connected to WhatsApp');
+    startLeaseHeartbeat();
     const { state: auth, saveCreds } = await usePostgresAuthState();
     let version;
     try {
@@ -91,6 +156,8 @@ async function connect() {
       browser: Browsers.ubuntu('Infinity Dashboard'),
       markOnlineOnConnect: false,
       syncFullHistory: false,
+      getMessage: getStoredMessage,
+      msgRetryCounterCache,
     });
     state.sock = sock;
     sock.ev.on('creds.update', saveCreds);
@@ -129,6 +196,8 @@ async function connect() {
           state.me = null;
           await prisma.waSession.deleteMany({});
           await logAction(null, 'WHATSAPP_UNLINKED', 'WhatsApp was unlinked from your phone — link it again from the WhatsApp page');
+        } else if (state.stopping) {
+          state.status = 'disconnected'; // handed over to another instance / shutting down
         } else {
           state.status = 'disconnected';
           state.lastError = u.lastDisconnect?.error?.message || null;
@@ -204,7 +273,19 @@ async function sendText(phone, text) {
   await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 1500)));
   await state.sock.sendPresenceUpdate('paused', exists.jid).catch(() => {});
   const sent = await state.sock.sendMessage(exists.jid, { text });
+  await rememberMessage(sent);
   return sent?.key?.id || null;
+}
+
+/** On shutdown (Render deploy): close the socket without logging out and free the lease at once. */
+async function stop() {
+  state.stopping = true;
+  if (leaseTimer) { clearInterval(leaseTimer); leaseTimer = null; }
+  try { state.sock?.end(undefined); } catch { /* ignore */ }
+  try {
+    const cur = await readLease();
+    if (cur?.id === INSTANCE) await prisma.waSession.deleteMany({ where: { key: LEASE_KEY } });
+  } catch { /* ignore */ }
 }
 
 async function unlink() {
@@ -228,5 +309,5 @@ async function resumeIfLinked() {
 }
 
 module.exports = {
-  startLinking, requestPairingCode, getStatus, isReady, ensureConnected, sendText, unlink, resumeIfLinked, hasSession,
+  startLinking, requestPairingCode, getStatus, isReady, ensureConnected, sendText, unlink, resumeIfLinked, hasSession, stop,
 };
