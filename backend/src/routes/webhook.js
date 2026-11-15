@@ -151,7 +151,7 @@ async function jarvisLookup(req, res) {
     const ql = q.toLowerCase();
 
     // 1. A specific client by business or contact name
-    if (q && !/^(all|everything|summary|today|campaign|pending|approval|website|callback|booked|bookings?)\b/.test(ql)) {
+    if (q && !/^(all|everything|summary|today|campaign|pending|approval|website|callback|booked|bookings?|calendar|schedule|meetings?|agenda|tomorrow|week)\b/.test(ql)) {
       const words = q.split(/\s+/).filter((w) => w.length > 2);
       const matches = await prisma.client.findMany({
         where: {
@@ -186,7 +186,12 @@ async function jarvisLookup(req, res) {
       const campaigns = await prisma.campaign.findMany({ orderBy: { created_at: 'desc' }, take: 3 });
       for (const c of campaigns) lines.push(`Campaign ${c.name} (${c.status.toLowerCase()}): ${c.booked} booked, ${c.callback_later} callback, ${c.rejected} rejected, ${c.no_answer} no answer.`);
     }
-    if (want(/booked|booking/)) {
+    if (want(/calendar|schedule|meeting|agenda|tomorrow|week|today/)) {
+      const { scheduleText } = require('../services/ownerCalls');
+      const sched = await scheduleText({ days: /week/.test(ql) ? 7 : /tomorrow/.test(ql) ? 2 : 7 });
+      lines.push(sched ? `Schedule: ${sched}.` : 'Your calendar is clear for the next 7 days.');
+    }
+        if (want(/booked|booking/)) {
       const booked = await prisma.client.findMany({ where: { call_outcome: 'BOOKED' }, orderBy: { created_at: 'desc' }, take: 10 });
       lines.push(booked.length ? `Booked clients:\n${booked.map((c) => `- ${describeClient(c)}`).join('\n')}` : 'No booked clients yet.');
     }
@@ -345,7 +350,8 @@ async function jarvisBuild(req, res) {
   if (!config.isConfigured.claudeBuilds) {
     return res.json({ answer: 'Claude builds aren\'t connected yet, sir — the Claude token or GitHub token is missing on the server.' });
   }
-  const kind = /app/i.test(String(src.kind || '')) ? 'app' : 'website';
+  const k = String(src.kind || '').toLowerCase();
+  const kind = /mobile|android|ios|phone/.test(k) ? 'mobile' : /app/.test(k) ? 'app' : 'website';
   // Setup takes a little while; answer now and report on WhatsApp.
   requestBuild(client.id, { kind, instructions: src.instructions || null, source: 'Jarvis call' })
     .catch(async (err) => {
@@ -354,7 +360,8 @@ async function jarvisBuild(req, res) {
         if (await waLinked.hasSession()) await waLinked.sendText(config.ownerPhone, `⚠️ Sir, I couldn't start the build for ${client.business_name}: ${err.message}`);
       } catch { /* ignore */ }
     });
-  return res.json({ answer: `On it, sir. Claude is starting the ${kind} for ${client.business_name} now — I'll WhatsApp you when it's built.` });
+  const label = { website: 'website', app: 'web app', mobile: 'mobile app' }[kind];
+  return res.json({ answer: `On it, sir. Claude is starting the ${label} for ${client.business_name} now — I'll call you when it's built.` });
 }
 
 router.post('/sarvam/jarvis-schedule', verifySecret, jarvisSchedule);

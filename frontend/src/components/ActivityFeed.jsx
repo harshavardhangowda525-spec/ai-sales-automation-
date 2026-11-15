@@ -31,7 +31,13 @@ function describe(action) {
     OWNER_CALL_UPDATE_QUEUED: ['Jarvis update call requested', 'bg-blue-400'],
     OWNER_CALL_UPDATE_PLACED: ['Jarvis is calling you', 'bg-blue-400'],
     UPDATE_CALL_DELIVERED: ['Jarvis update delivered', 'bg-emerald-400'],
-    OWNER_CALL_SUMMARY_QUEUED: ['Summary call queued', 'bg-emerald-400'],
+    CLAUDE_BUILD_STARTED: ['Claude started building', 'bg-violet-400'],
+    CLAUDE_BUILD_DONE: ['Claude finished building', 'bg-emerald-400'],
+    OWNER_CALL_NOTICE_QUEUED: ['Jarvis will call you with news', 'bg-blue-400'],
+    OWNER_CALL_NOTICE_PLACED: ['Jarvis is calling you with news', 'bg-blue-400'],
+    JARVIS_SCHEDULED: ['Jarvis booked a meeting', 'bg-blue-400'],
+    WHATSAPP_LINKED: ['WhatsApp linked', 'bg-emerald-400'],
+        OWNER_CALL_SUMMARY_QUEUED: ['Summary call queued', 'bg-emerald-400'],
     OWNER_CALL_SUMMARY_PLACED: ['Calling you · campaign summary', 'bg-emerald-400'],
   };
   if (a.endsWith('_ERROR')) return [`Error · ${a.replace(/_ERROR$/, '').replace(/_/g, ' ').toLowerCase()}`, 'bg-red-500'];

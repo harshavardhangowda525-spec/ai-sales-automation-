@@ -30,6 +30,8 @@ const config = {
   // Video-call link for consultations when Google isn't connected (e.g. your permanent Meet room).
   // Empty → each consultation gets its own free Jitsi Meet room.
   meetingRoomUrl: env('MEETING_ROOM_URL'),
+  // Link clients use to review their project (your client portal). Used in "website ready to review" messages.
+  clientPortalUrl: env('CLIENT_PORTAL_URL'),
   ownerCalls: {
     // Ask Harshavardhan on a call before a quotation goes to the client (default on)
     requireQuotationApproval: env('REQUIRE_QUOTATION_APPROVAL', 'true') !== 'false',

@@ -203,4 +203,45 @@ async function scheduleGoogleMeet(client, prefs = {}, opts = {}) {
   return { meetLink, eventId: event.id, scheduledTime: start };
 }
 
-module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient };
+/**
+ * Upcoming items for Jarvis: Google Calendar events (when connected) merged with consultations
+ * booked in the dashboard. Returns [{ start: Date, title, link }], soonest first.
+ */
+async function listUpcomingSchedule({ days = 7 } = {}) {
+  const now = new Date();
+  const until = new Date(now.getTime() + days * 86400000);
+  const items = [];
+  const seen = new Set();
+  if (config.isConfigured.google) {
+    try {
+      const { data } = await calendarApi().events.list({
+        calendarId: config.google.calendarId,
+        timeMin: now.toISOString(),
+        timeMax: until.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 30,
+      });
+      for (const e of data.items || []) {
+        const start = e.start?.dateTime ? new Date(e.start.dateTime) : e.start?.date ? new Date(`${e.start.date}T00:00:00+05:30`) : null;
+        if (!start) continue;
+        items.push({ start, title: e.summary || 'Busy', link: extractMeetLink(e), allDay: !e.start?.dateTime });
+        if (e.id) seen.add(e.id);
+      }
+    } catch (err) {
+      // fall back to dashboard meetings only
+    }
+  }
+  const booked = await prisma.client.findMany({
+    where: { meeting_time: { gte: now, lte: until } },
+    orderBy: { meeting_time: 'asc' },
+    select: { business_name: true, meeting_time: true, meeting_link: true, calendar_event_id: true },
+  });
+  for (const c of booked) {
+    if (c.calendar_event_id && seen.has(c.calendar_event_id)) continue;
+    items.push({ start: c.meeting_time, title: `Consultation with ${c.business_name}`, link: c.meeting_link });
+  }
+  return items.sort((a, b) => a.start - b.start);
+}
+
+module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule };

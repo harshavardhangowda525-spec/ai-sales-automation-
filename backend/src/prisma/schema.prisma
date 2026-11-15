@@ -152,6 +152,7 @@ enum WebsiteStage {
 enum OwnerCallType {
   SUMMARY   // end-of-campaign report
   UPDATE    // "Jarvis, call me now" — calls + website progress, any time
+  NOTICE    // one-off news for Harsha, e.g. "Claude finished building X"
   QUOTATION // approve sending a proposal to a client
   WEBSITE   // approve sending the live website link to a client
 }

@@ -30,10 +30,26 @@ function buildVariables(call, client) {
     requirements: (client?.requirements || '-').replace(/\s*\n+\s*/g, '; ').slice(0, 400),
     website_url: call.data?.website_url || '-',
     booked_count: '-', booked_names: '-', callback_count: '-', rejected_count: '-', no_answer_count: '-', meets_scheduled: '-',
-    campaign_name: '-', period: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-',
+    campaign_name: '-', period: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-', today_schedule: '-', notice: '-',
   };
-  if (call.type === 'SUMMARY' || call.type === 'UPDATE') Object.assign(base, call.data || {});
+  if (['SUMMARY', 'UPDATE', 'NOTICE'].includes(call.type)) Object.assign(base, call.data || {});
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
+}
+
+/** "Kaveri Bakery consultation at 4:00 PM; Team call at 6:00 PM" for the next N days (IST). */
+async function scheduleText({ days = 7, todayOnly = false } = {}) {
+  const { listUpcomingSchedule } = require('./googleCalendar');
+  const items = await listUpcomingSchedule({ days }).catch(() => []);
+  const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const fmt = (d, withDay) => new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true,
+    ...(withDay ? { weekday: 'short', day: 'numeric', month: 'short' } : {}),
+  }).format(d);
+  return items
+    .filter((i) => !todayOnly || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(i.start) === todayKey)
+    .slice(0, 12)
+    .map((i) => `${i.title} ${i.allDay ? (todayOnly ? '(all day)' : `on ${fmt(i.start, true).split(',').slice(0, 2).join(',')}`) : `at ${fmt(i.start, !todayOnly)}`}`)
+    .join('; ');
 }
 
 /**
@@ -76,6 +92,8 @@ async function buildJarvisContext() {
   if (callbacks.length) {
     lines.push(`Asked for a callback: ${callbacks.map((c) => `${c.business_name}${c.preferred_time ? ` (${c.preferred_time})` : ''}`).join(', ')}.`);
   }
+  const schedule = await scheduleText({ days: 7 });
+  lines.push(schedule ? `Sir's schedule, next 7 days (Google Calendar + booked consultations): ${schedule}.` : "Sir's calendar is clear for the next 7 days.");
   lines.push(pending.length
     ? `Waiting for your approval: ${pending.map((p) => `${p.type === 'QUOTATION' ? 'quotation' : 'website link'} for ${p.client?.business_name}`).join(', ')}.`
     : 'Nothing is waiting for approval.');
@@ -103,7 +121,11 @@ function buildSpokenMessage(call, vars) {
     if (num(vars.no_answer_count)) parts.push(`${vars.no_answer_count} didn't pick up.`);
     if (call.type === 'UPDATE') parts.push(`Websites: ${vars.websites_summary}.`);
     if (num(vars.pending_approvals)) parts.push(`You have ${vars.pending_approvals} approvals waiting in the dashboard.`);
+    if (vars.today_schedule && vars.today_schedule !== '-') parts.push(`On your calendar today: ${vars.today_schedule}.`);
     parts.push('Anything you want to know more about?');
+  } else if (call.type === 'NOTICE') {
+    parts.push(call.data?.notice || vars.notice || 'I have an update for you, sir.');
+    parts.push('Anything you want me to do about it?');
   } else if (call.type === 'QUOTATION') {
     parts.push(`A new client just booked, sir: ${vars.business_name}${vars.contact_name !== '-' ? `, contact ${vars.contact_name}` : ''}.`);
     parts.push(`They're interested in the ${vars.plan_name} plan${vars.plan_price !== '-' ? ` at ${vars.plan_price}` : ''}.`);
@@ -130,7 +152,7 @@ async function requestOwnerCall(type, { clientId = null, campaignId = null, data
   const call = await prisma.ownerCall.create({ data: { type, client_id: clientId, campaign_id: campaignId, data } });
 
   if (!config.isConfigured.ownerCalls) {
-    await prisma.ownerCall.update({ where: { id: call.id }, data: { status: ['SUMMARY', 'UPDATE'].includes(type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: 'Assistant agent / owner phone not configured' } });
+    await prisma.ownerCall.update({ where: { id: call.id }, data: { status: ['SUMMARY', 'UPDATE', 'NOTICE'].includes(type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: 'Assistant agent / owner phone not configured' } });
     await logAction(clientId, `OWNER_CALL_${type}_MOCK`,
       `Call to Harsha not placed (assistant agent, connection or HARSHAVARDHAN_PHONE not configured).${type === 'SUMMARY' ? ` Report: ${JSON.stringify(data)}` : ' Approve it from the dashboard.'}`);
     return call;
@@ -139,6 +161,7 @@ async function requestOwnerCall(type, { clientId = null, campaignId = null, data
   await logAction(clientId, `OWNER_CALL_${type}_QUEUED`,
     type === 'SUMMARY' ? 'Campaign summary call queued'
       : type === 'UPDATE' ? 'Jarvis status call requested — calling now'
+        : type === 'NOTICE' ? `Jarvis will call you: ${String(data?.notice || '').slice(0, 160)}`
         : `Approval call queued${inCallingHours() ? '' : ' — will call during calling hours'}`);
   processQueue().catch((err) => logError(null, 'OWNER_CALL_QUEUE', err));
   return call;
@@ -194,10 +217,10 @@ async function scheduleRetryOrManual(id, note) {
   } else {
     await prisma.ownerCall.update({
       where: { id },
-      data: { status: ['SUMMARY', 'UPDATE'].includes(call.type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: note },
+      data: { status: ['SUMMARY', 'UPDATE', 'NOTICE'].includes(call.type) ? 'DONE' : 'NEEDS_MANUAL', decision_note: note },
     });
     await logAction(call.client_id, `OWNER_CALL_${call.type}_UNANSWERED`,
-      ['SUMMARY', 'UPDATE'].includes(call.type) ? `${note} — summary is on the dashboard` : `${note} — approve or reject from the dashboard`);
+      ['SUMMARY', 'UPDATE', 'NOTICE'].includes(call.type) ? `${note} — details are on the dashboard` : `${note} — approve or reject from the dashboard`);
   }
 }
 
@@ -345,7 +368,7 @@ async function handleOwnerWebhook(body = {}) {
   const connectivity = String(body.status || body.connectivity_status || '').toLowerCase();
   const connected = !connectivity || ['connected', 'completed', 'success'].includes(connectivity);
 
-  if (call.type === 'SUMMARY' || call.type === 'UPDATE') {
+  if (['SUMMARY', 'UPDATE', 'NOTICE'].includes(call.type)) {
     if (connected) {
       await prisma.ownerCall.update({ where: { id: call.id }, data: { status: 'DONE', decided_at: new Date() } });
       await logAction(null, call.type === 'UPDATE' ? 'UPDATE_CALL_DELIVERED' : 'SUMMARY_CALL_DELIVERED',
@@ -418,7 +441,9 @@ async function buildUpdateData({ since = null } = {}) {
     : 'no websites in progress yet';
   const pending = await prisma.ownerCall.count({ where: { type: { in: ['QUOTATION', 'WEBSITE'] }, status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } } });
 
+  const todaySchedule = await scheduleText({ days: 1, todayOnly: true });
   return {
+    today_schedule: todaySchedule || '-',
     campaign_name: campaignName || '-',
     period: since ? 'Since my last update' : '-',
     total_calls: n('BOOKED') + n('REJECTED') + n('NO_ANSWER') + n('CALLBACK_LATER'),
@@ -463,6 +488,6 @@ function startOwnerCallWorker() {
 }
 
 module.exports = {
-  requestUpdateCall, buildUpdateData, buildSpokenMessage, buildJarvisContext, maybeAutoUpdate,
+  requestUpdateCall, buildUpdateData, buildSpokenMessage, buildJarvisContext, maybeAutoUpdate, scheduleText,
   requestOwnerCall, processQueue, handleOwnerWebhook, decide, retryOwnerCall, startOwnerCallWorker, parseDecision, buildVariables,
 };

@@ -162,6 +162,7 @@ export default function WebsiteBuild({ client, onChanged, onReady }) {
               <select className="input w-auto py-1 text-xs" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Build type">
                 <option value="website">Website</option>
                 <option value="app">Web app</option>
+                <option value="mobile">Mobile app</option>
               </select>
               <button className="btn-primary btn-sm" disabled={busy === 'build' || client.build_status === 'running'} onClick={build}>
                 {busy === 'build' ? 'Starting…' : client.build_status === 'running' ? 'Building…' : 'Build now'}
