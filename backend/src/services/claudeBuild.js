@@ -191,37 +191,77 @@ async function handleBuildDone({ repo, status, run_url: runUrl, preview_url: pre
   return { ok: true };
 }
 
-/**
- * Sir said "send the quotation to X": make the proposal and send it to the client's registered
- * number (via the Client Portal when connected, else the PDF on WhatsApp). Sir's word is the approval.
- */
-async function sendQuotation(clientId, { phone = null, source = 'Jarvis call' } = {}) {
-  let client = await prisma.client.findUnique({ where: { id: clientId } });
+async function setPhoneIfGiven(client, phone) {
   const digits = String(phone || '').replace(/\D/g, '');
-  if (digits.length >= 10) {
-    const { toE164 } = require('../lib/phone');
-    client = await prisma.client.update({ where: { id: client.id }, data: { phone_number: toE164(phone) } });
-  }
-  if (String(client.phone_number || '').replace(/\D/g, '').length < 10) {
-    throw Object.assign(new Error(`I don't have a phone number for ${client.business_name}, sir. Tell me their number and I'll send it.`), { status: 400 });
-  }
-  const portal = require('./clientPortal');
-  if (portal.isConfigured()) {
-    const r = await portal.deliverApprovedQuotation(client);
-    await logAction(client.id, 'QUOTATION_SENT', `Quotation sent via the Client Portal (${source})${r.status === 'asked_email' ? ' — asked the client for their email first' : ''}`);
-    return { client, via: r.status === 'asked_email' ? 'asked_email' : 'portal' };
-  }
-  const { generateProposal } = require('./proposalGenerator');
-  const { sendWhatsAppMessage } = require('./whatsapp');
+  if (digits.length < 10) return client;
+  const { toE164 } = require('../lib/phone');
+  return prisma.client.update({ where: { id: client.id }, data: { phone_number: toE164(phone) } });
+}
+const hasPhone = (c) => String(c.phone_number || '').replace(/\D/g, '').length >= 10;
+
+/**
+ * Step 1 — sir says "prepare / send the quotation for X": make the proposal, WhatsApp it to SIR only,
+ * and park it as an approval. Nothing goes to the client until sir approves.
+ */
+async function prepareQuotation(clientId, { phone = null, source = 'Jarvis call' } = {}) {
+  let client = await prisma.client.findUnique({ where: { id: clientId } });
+  client = await setPhoneIfGiven(client, phone);
+  const { generateProposal, PLANS } = require('./proposalGenerator');
   const proposal = await generateProposal(client);
   const fresh = await prisma.client.findUnique({ where: { id: client.id } });
-  await sendWhatsAppMessage(fresh, fresh.proposal_url, fresh.meeting_link, fresh.meeting_time, { proposalNumber: proposal.number });
-  await prisma.client.update({
-    where: { id: client.id },
-    data: { proposal_sent: true, ...(['CONVERTED', 'LOST', 'MEETING_SCHEDULED'].includes(fresh.portal_status) ? {} : { portal_status: 'PROPOSAL_SENT' }) },
+  // Replace any older quotation still waiting for approval.
+  await prisma.ownerCall.updateMany({
+    where: { client_id: client.id, type: 'QUOTATION', status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } },
+    data: { status: 'CANCELLED', decision_note: 'Replaced by a newer quotation' },
   });
-  await logAction(client.id, 'QUOTATION_SENT', `${proposal.number} sent to ${fresh.phone_number} on WhatsApp (${source})`);
-  return { client: fresh, via: 'whatsapp', number: proposal.number };
+  const approval = await prisma.ownerCall.create({
+    data: {
+      type: 'QUOTATION', status: 'NEEDS_MANUAL', client_id: client.id,
+      data: { proposal_number: proposal.number, proposal_url: fresh.proposal_url, prepared_from: source },
+      decision_note: 'Waiting for your approval (sent to you on WhatsApp)',
+    },
+  });
+  const plan = PLANS[fresh.plan_interest];
+  const price = plan ? `${plan.name || fresh.plan_interest} ₹${plan.price}` : 'plan not set';
+  await notifyOwner(`📄 Sir, quotation *${proposal.number}* for *${fresh.business_name}* (${price}) is ready:\n${fresh.proposal_url}\n\n`
+    + `It has NOT gone to the client yet. Tell Jarvis "approve the quotation for ${fresh.business_name}", or approve it in the dashboard.`
+    + `${hasPhone(fresh) ? `\nIt will go to ${fresh.phone_number}.` : '\n⚠️ No client phone number saved yet — give Jarvis their number.'}`);
+  await logAction(client.id, 'QUOTATION_PREPARED', `${proposal.number} sent to sir for approval (${source})`);
+  return { client: fresh, approval, number: proposal.number, price };
 }
 
-module.exports = { requestBuild, requestDeploy, handleBuildDone, sendQuotation, buildPrompt, KIND_LABEL };
+/** Step 2 — sir approves: the prepared quotation goes to the client's registered number. */
+async function approveQuotation(clientId, { phone = null, source = 'Jarvis call' } = {}) {
+  let client = await prisma.client.findUnique({ where: { id: clientId } });
+  const pending = await prisma.ownerCall.findFirst({
+    where: { client_id: clientId, type: 'QUOTATION', status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } },
+    orderBy: { created_at: 'desc' },
+  });
+  if (!pending) throw Object.assign(new Error(`There's no quotation waiting for approval for ${client.business_name}, sir. Should I prepare one?`), { status: 400 });
+  client = await setPhoneIfGiven(client, phone);
+  if (!hasPhone(client)) throw Object.assign(new Error(`I don't have a phone number for ${client.business_name}, sir. Tell me their number and I'll send it.`), { status: 400 });
+  const { decide } = require('./ownerCalls');
+  const r = await decide(pending.id, 'APPROVED', `Approved on ${source}`, source);
+  if (!r.ok) throw new Error(r.error || 'sending failed');
+  return { client, number: pending.data?.proposal_number, waitingForEmail: Boolean(r.waitingForEmail) };
+}
+
+/** Pending quotation (prepared, waiting for sir) for a client, if any. */
+async function pendingQuotation(clientId) {
+  return prisma.ownerCall.findFirst({
+    where: { client_id: clientId, type: 'QUOTATION', status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } },
+    orderBy: { created_at: 'desc' },
+  });
+}
+
+/** Dashboard button: sir clicking it is the approval, so prepare + send in one go. */
+async function sendQuotation(clientId, { phone = null, source = 'dashboard' } = {}) {
+  let client = await prisma.client.findUnique({ where: { id: clientId } });
+  client = await setPhoneIfGiven(client, phone);
+  if (!hasPhone(client)) throw Object.assign(new Error(`No phone number saved for ${client.business_name} — add it first.`), { status: 400 });
+  if (!(await pendingQuotation(clientId))) await prepareQuotation(clientId, { source });
+  const r = await approveQuotation(clientId, { source });
+  return { client: r.client, number: r.number, via: r.waitingForEmail ? 'asked_email' : 'sent' };
+}
+
+module.exports = { requestBuild, requestDeploy, handleBuildDone, sendQuotation, prepareQuotation, approveQuotation, pendingQuotation, buildPrompt, KIND_LABEL };

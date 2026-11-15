@@ -245,7 +245,7 @@ router.post('/sarvam/jarvis-lookup', verifySecret, jarvisLookup);
 // ── Jarvis action tools (only for sir's number) ─────────────────────────────────────────────
 const { scheduleGoogleMeet } = require('../services/googleCalendar');
 const { sendMeetingMessage } = require('../services/whatsapp');
-const { requestBuild, requestDeploy, handleBuildDone, sendQuotation } = require('../services/claudeBuild');
+const { requestBuild, requestDeploy, handleBuildDone, prepareQuotation, approveQuotation, pendingQuotation } = require('../services/claudeBuild');
 const { addClient } = require('../services/clientsService');
 const waLinked = require('../services/waLinked');
 const { istParts, istDate } = require('../lib/time');
@@ -412,8 +412,8 @@ async function jarvisBuild(req, res) {
   // build_project doubles as deploy / send-quotation, so no new tools are needed in the Sarvam editor.
   const intent = `${src.kind || ''} ${src.action || ''} ${src.instructions || ''}`.toLowerCase();
   const isBuild = /\b(build|rebuild|redo|create|make (a|the|it)|website for|app for|change|update|fix)\b/.test(intent);
-  const wantsDeploy = !isBuild && /\b(deploy|publish|go live|make it live|put it live|live link|host)\b/.test(intent);
-  const wantsQuote = !isBuild && /\b(quotation|quote|proposal)\b/.test(intent);
+  const wantsDeploy = !isBuild && !/\b(quotation|quote|proposal)\b/.test(intent) && /\b(deploy|publish|go live|make it live|put it live|live link|host)\b/.test(intent);
+  const wantsQuote = /\b(quotation|quote|proposal|approve|approved)\b/.test(intent);
   if ((wantsDeploy || wantsQuote) && !client) return res.json({ answer: `I couldn't find a client called ${wanted}, sir. Which one do you mean?` });
   if (wantsDeploy) return deployFor(client, res);
   if (wantsQuote) return quotationFor(client, src, res);
@@ -457,19 +457,28 @@ async function deployFor(client, res) {
 }
 
 async function quotationFor(client, src, res) {
+  // Jarvis often puts the number inside the instructions ("send it to 9 9 8 0 8 ...").
+  const spoken = String(src.instructions || '').replace(/[^\d+]/g, '');
+  const phone = src.phone || src.number || (spoken.match(/(?:\+?91)?[6-9]\d{9}/) || [])[0];
+  const text = `${src.kind || ''} ${src.action || ''} ${src.instructions || ''}`.toLowerCase();
+  const approving = /approv|confirm|go ahead|yes|send it to (the )?client|send to (the )?client|looks good/.test(text)
+    && !/prepare|redo|new quotation|again/.test(text);
   try {
-    // Jarvis often puts the number inside the instructions ("send it to 9 9 8 0 8 ...").
-    const spoken = String(src.instructions || '').replace(/[^\d+]/g, '');
-    const fromText = (spoken.match(/(?:\+?91)?[6-9]\d{9}/) || [])[0];
-    const r = await sendQuotation(client.id, { phone: src.phone || src.number || fromText, source: 'Jarvis call' });
-    const to = r.client.phone_number;
+    if (approving && await pendingQuotation(client.id)) {
+      const r = await approveQuotation(client.id, { phone, source: 'Jarvis call' });
+      return res.json({
+        answer: r.waitingForEmail
+          ? `Approved, sir. I've messaged ${client.business_name} on ${r.client.phone_number} for their email — the portal with the quotation goes out when they reply.`
+          : `Approved and sent, sir. Quotation ${r.number || ''} has gone to ${client.business_name} on WhatsApp, ${r.client.phone_number}.`,
+      });
+    }
+    const r = await prepareQuotation(client.id, { phone, source: 'Jarvis call' });
     return res.json({
-      answer: r.via === 'asked_email'
-        ? `Done, sir. I've messaged ${client.business_name} on ${to} asking for their email — their portal with the quotation goes out as soon as they reply.`
-        : `Done, sir. The quotation${r.number ? ` ${r.number}` : ''} has gone to ${client.business_name} on WhatsApp, ${to}.`,
+      answer: `I've prepared quotation ${r.number} for ${client.business_name} (${r.price}) and sent it to your WhatsApp, sir. It hasn't gone to the client yet — shall I send it to them?`
+        + (String(r.client.phone_number).replace(/\D/g, '').length >= 10 ? '' : ' I will also need their phone number.'),
     });
   } catch (err) {
-    return res.json({ answer: err.status === 400 ? err.message : `I couldn't send the quotation, sir: ${err.message}.` });
+    return res.json({ answer: err.status === 400 ? err.message : `I couldn't do the quotation, sir: ${err.message}.` });
   }
 }
 
