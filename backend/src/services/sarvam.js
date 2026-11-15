@@ -151,8 +151,9 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
           users: contacts.slice(0, 1000).map((c) => ({
             user_phone_number: toE164(c.phone_number),
             user_identifier: c.business_name || undefined,
-            // One agent handles every call; call_type tells it which script to follow.
-            app_variables: { call_type: 'sales', business_name: c.business_name || '' },
+            // The sales agent only defines business_name — sending variables it doesn't have gets
+            // the upload rejected (Jarvis now has his own agent, so no call_type is needed here).
+            app_variables: { business_name: c.business_name || '' },
           })),
         });
     }
