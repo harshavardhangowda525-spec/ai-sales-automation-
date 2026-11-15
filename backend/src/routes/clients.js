@@ -9,12 +9,13 @@ const { requestOwnerCall } = require('../services/ownerCalls');
 const { generateWebsitePrompt } = require('../services/websitePrompt');
 const { createClientRepo } = require('../services/github');
 const { requestBuild } = require('../services/claudeBuild');
+const { addClient } = require('../services/clientsService');
 const waLinked = require('../services/waLinked');
 const { sendWebsiteReadyMessage } = require('../services/whatsapp');
 const STAGES = ['NOT_STARTED', 'PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW', 'READY', 'DELIVERED'];
 
 const router = express.Router();
-const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER'];
+const OUTCOMES = ['BOOKED', 'REJECTED', 'NO_ANSWER', 'CALLBACK_LATER', 'MANUAL'];
 const PLANS = ['BASIC', 'PREMIUM', 'ADVANCED', 'UNKNOWN'];
 const PORTAL = ['NEW_LEAD', 'PROPOSAL_SENT', 'MEETING_SCHEDULED', 'CONVERTED', 'LOST'];
 
@@ -51,6 +52,17 @@ router.get('/', async (req, res, next) => {
     });
     res.json(clients);
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/clients — add a client by hand { business_name, contact_name?, phone?, plan?, requirements?, notes? }
+router.post('/', async (req, res, next) => {
+  try {
+    const { client, created } = await addClient(req.body || {}, 'dashboard');
+    res.status(created ? 201 : 200).json({ ok: true, created, client });
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
 });

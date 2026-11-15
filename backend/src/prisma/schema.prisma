@@ -22,6 +22,7 @@ enum CallOutcome {
   REJECTED
   NO_ANSWER
   CALLBACK_LATER
+  MANUAL // added by sir (Jarvis or dashboard), not from a sales call
 }
 
 enum PlanInterest {

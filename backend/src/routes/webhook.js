@@ -131,7 +131,7 @@ const STAGE_TEXT = {
   NOT_STARTED: 'not started', PROMPT_READY: 'brief ready', IN_DEVELOPMENT: 'in development',
   IN_REVIEW: 'in review', READY: 'ready, waiting for your OK', DELIVERED: 'delivered',
 };
-const OUTCOME_TEXT = { BOOKED: 'booked', REJECTED: 'not interested', NO_ANSWER: "didn't pick up", CALLBACK_LATER: 'wants a callback' };
+const OUTCOME_TEXT = { BOOKED: 'booked', REJECTED: 'not interested', NO_ANSWER: "didn't pick up", CALLBACK_LATER: 'wants a callback', MANUAL: 'added by you' };
 
 function describeClient(c, { full = false } = {}) {
   const parts = [
@@ -242,6 +242,7 @@ router.post('/sarvam/jarvis-lookup', verifySecret, jarvisLookup);
 const { scheduleGoogleMeet } = require('../services/googleCalendar');
 const { sendMeetingMessage } = require('../services/whatsapp');
 const { requestBuild, handleBuildDone } = require('../services/claudeBuild');
+const { addClient } = require('../services/clientsService');
 const waLinked = require('../services/waLinked');
 const { istParts, istDate } = require('../lib/time');
 
@@ -256,15 +257,16 @@ function toolInput(req) {
 async function findClient(name) {
   const q = String(name || '').trim();
   if (!q) return null;
-  const words = q.split(/\s+/).filter((w) => w.length > 2);
+  // 1) whole name inside business or contact name; 2) every word present (AND) — never a single shared word.
+  const whole = await prisma.client.findFirst({
+    where: { OR: [{ business_name: { contains: q, mode: 'insensitive' } }, { contact_name: { contains: q, mode: 'insensitive' } }] },
+    orderBy: { updated_at: 'desc' },
+  });
+  if (whole) return whole;
+  const words = q.split(/\s+/).filter((w) => w.length > 2 && !/^(the|and|for|website|site|app|mobile|client)$/i.test(w));
+  if (!words.length) return null;
   return prisma.client.findFirst({
-    where: {
-      OR: [
-        { business_name: { contains: q, mode: 'insensitive' } },
-        { contact_name: { contains: q, mode: 'insensitive' } },
-        ...words.map((w) => ({ business_name: { contains: w, mode: 'insensitive' } })),
-      ],
-    },
+    where: { AND: words.map((w) => ({ business_name: { contains: w, mode: 'insensitive' } })) },
     orderBy: { updated_at: 'desc' },
   });
 }
@@ -361,8 +363,18 @@ async function jarvisWhatsApp(req, res) {
 async function jarvisBuild(req, res) {
   const { src, isOwner } = toolInput(req);
   if (!isOwner) return res.json({ answer: 'Only sir can start builds.' });
-  const client = await findClient(src.client || src.name).catch(() => null);
-  if (!client) return res.json({ answer: `I couldn't find a client called "${src.client || src.name}", sir.` });
+  const wanted = src.client || src.name || src.business_name;
+  if (!wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
+  let client = await findClient(wanted).catch(() => null);
+  let added = '';
+  if (!client) {
+    // New project — add it as a client first, with what sir described as the requirements.
+    ({ client } = await addClient({
+      business_name: wanted, contact_name: src.contact_name, phone: src.phone,
+      plan: src.plan, requirements: src.instructions || src.description,
+    }, 'Jarvis call (new build)'));
+    added = `I've added ${client.business_name} as a new client. `;
+  }
   if (!config.isConfigured.claudeBuilds) {
     return res.json({ answer: 'Claude builds aren\'t connected yet, sir — the Claude token or GitHub token is missing on the server.' });
   }
@@ -377,9 +389,32 @@ async function jarvisBuild(req, res) {
       } catch { /* ignore */ }
     });
   const label = { website: 'website', app: 'web app', mobile: 'mobile app' }[kind];
-  return res.json({ answer: `On it, sir. Claude is starting the ${label} for ${client.business_name} now — I'll call you when it's built.` });
+  return res.json({ answer: `On it, sir. ${added}Claude is starting the ${label} for ${client.business_name} now — I'll call you when it's built.` });
 }
 
+// POST /webhook/sarvam/jarvis-add-client { business_name, contact_name?, phone?, plan?, requirements?, notes?, caller }
+async function jarvisAddClient(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can add clients.' });
+  try {
+    const name = src.business_name || src.client || src.name;
+    if (!name) return res.json({ answer: "What's the business name, sir?" });
+    const { client, created } = await addClient({
+      business_name: name, contact_name: src.contact_name, phone: src.phone || src.phone_number_client || src.number,
+      plan: src.plan, requirements: src.requirements, notes: src.notes,
+    }, 'Jarvis call');
+    const noPhone = client.phone_number === '-' ? " I don't have their phone number yet — tell me if you want me to add it." : '';
+    return res.json({
+      answer: created
+        ? `Done, sir. I've added ${client.business_name}${client.contact_name ? ` (${client.contact_name})` : ''} to your clients.${noPhone}`
+        : `${client.business_name} was already in your clients, sir — I've updated their details.`,
+    });
+  } catch (err) {
+    await logError(null, 'JARVIS_ADD_CLIENT', err);
+    return res.json({ answer: `I couldn't add them, sir: ${err.message}` });
+  }
+}
+router.post('/sarvam/jarvis-add-client', verifySecret, jarvisAddClient);
 router.post('/sarvam/jarvis-schedule', verifySecret, jarvisSchedule);
 router.post('/sarvam/jarvis-whatsapp', verifySecret, jarvisWhatsApp);
 router.post('/sarvam/jarvis-build', verifySecret, jarvisBuild);

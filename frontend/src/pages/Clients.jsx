@@ -1,11 +1,48 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import ClientTable from '../components/ClientTable';
 import Icon from '../components/Icon';
 import usePolling from '../lib/usePolling';
 import { api } from '../lib/api';
+import { useToast } from '../components/Toast';
 
-const OUTCOMES = [['', 'All outcomes'], ['BOOKED', 'Booked'], ['CALLBACK_LATER', 'Callback'], ['REJECTED', 'Rejected'], ['NO_ANSWER', 'No answer']];
+function AddClient({ onClose, onAdded }) {
+  const [f, setF] = useState({ business_name: '', contact_name: '', phone: '', plan: '', requirements: '' });
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await api('/api/clients', { method: 'POST', body: f });
+      toast(r.created ? `${r.client.business_name} added` : `${r.client.business_name} already existed — details updated`, 'success');
+      onAdded(r.client);
+    } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+  }
+  return (
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-4" onClick={onClose}>
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="card w-full max-w-md space-y-3 p-6">
+        <h3 className="text-lg">Add client</h3>
+        <input required className="input" placeholder="Business name *" value={f.business_name} onChange={set('business_name')} />
+        <div className="grid grid-cols-2 gap-3">
+          <input className="input" placeholder="Contact name" value={f.contact_name} onChange={set('contact_name')} />
+          <input className="input" placeholder="Phone, e.g. 9845012345" value={f.phone} onChange={set('phone')} />
+        </div>
+        <select className="input" value={f.plan} onChange={set('plan')} aria-label="Plan">
+          <option value="">Plan not decided</option><option value="BASIC">Basic</option><option value="PREMIUM">Premium</option><option value="ADVANCED">Advanced</option>
+        </select>
+        <textarea rows={3} className="input" placeholder="What they need (used for the build brief)" value={f.requirements} onChange={set('requirements')} />
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={busy}>{busy ? 'Adding…' : 'Add client'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const OUTCOMES = [['', 'All outcomes'], ['BOOKED', 'Booked'], ['MANUAL', 'Added by you'], ['CALLBACK_LATER', 'Callback'], ['REJECTED', 'Rejected'], ['NO_ANSWER', 'No answer']];
 const PLANS = [['', 'All plans'], ['BASIC', 'Basic'], ['PREMIUM', 'Premium'], ['ADVANCED', 'Advanced'], ['UNKNOWN', 'Unknown']];
 
 export default function Clients() {
@@ -28,6 +65,8 @@ export default function Clients() {
   }, [outcome, plan, from, to, params]);
 
   const { data, error, loading, reload } = usePolling(() => api(`/api/clients?${query}`), 10000, [query]);
+  const [adding, setAdding] = useState(false);
+  const navigate = useNavigate();
 
   const set = (key, value) => {
     const next = new URLSearchParams(params);
@@ -42,6 +81,7 @@ export default function Clients() {
           <h1 className="text-2xl">Clients</h1>
           <p className="text-sm">{data ? `${data.length} client${data.length === 1 ? '' : 's'}` : 'Every business your AI agent has spoken to.'}</p>
         </div>
+        <button className="btn-primary" onClick={() => setAdding(true)}>+ Add client</button>
       </div>
 
       <div className="card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -63,6 +103,7 @@ export default function Clients() {
       {loading && !data && <p className="text-sm">Loading clients…</p>}
       {error && <div className="card p-4 text-sm text-red-300">{error.message}</div>}
       {data && <ClientTable clients={data} onChanged={reload} />}
+      {adding && <AddClient onClose={() => setAdding(false)} onAdded={(c) => { setAdding(false); navigate(`/clients/${c.id}`); }} />}
     </div>
   );
 }

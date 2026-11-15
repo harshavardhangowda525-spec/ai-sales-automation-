@@ -24,7 +24,7 @@ router.get('/', async (req, res, next) => {
         take: 10,
         include: { client: { select: { id: true, business_name: true } } },
       }),
-      prisma.client.count(),
+      prisma.client.count({ where: { call_outcome: { not: 'MANUAL' } } }), // calls only
     ]);
 
     const pendingApprovals = await prisma.ownerCall.findMany({

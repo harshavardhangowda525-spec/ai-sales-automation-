@@ -18,7 +18,7 @@ export function Badge({ tone = 'gray', children }) {
   );
 }
 
-const OUTCOME_TONE = { BOOKED: 'green', REJECTED: 'red', NO_ANSWER: 'gray', CALLBACK_LATER: 'amber' };
+const OUTCOME_TONE = { BOOKED: 'green', REJECTED: 'red', NO_ANSWER: 'gray', CALLBACK_LATER: 'amber', MANUAL: 'cyan' };
 const PLAN_TONE = { BASIC: 'cyan', PREMIUM: 'blue', ADVANCED: 'purple', UNKNOWN: 'gray' };
 const PORTAL_TONE = { NEW_LEAD: 'gray', PROPOSAL_SENT: 'purple', MEETING_SCHEDULED: 'blue', CONVERTED: 'green', LOST: 'red' };
 

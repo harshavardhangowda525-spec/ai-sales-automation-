@@ -27,7 +27,7 @@ export function timeAgo(d) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export const OUTCOME_LABEL = { BOOKED: 'Booked', REJECTED: 'Rejected', NO_ANSWER: 'No answer', CALLBACK_LATER: 'Callback' };
+export const OUTCOME_LABEL = { BOOKED: 'Booked', REJECTED: 'Rejected', NO_ANSWER: 'No answer', CALLBACK_LATER: 'Callback', MANUAL: 'Added by you' };
 export const PLAN_LABEL = { BASIC: 'Basic', PREMIUM: 'Premium', ADVANCED: 'Advanced', UNKNOWN: 'Unknown' };
 export const PORTAL_LABEL = {
   NEW_LEAD: 'New lead', PROPOSAL_SENT: 'Proposal sent', MEETING_SCHEDULED: 'Meeting scheduled', CONVERTED: 'Converted', LOST: 'Lost',
