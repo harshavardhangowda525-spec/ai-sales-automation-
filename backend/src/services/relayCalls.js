@@ -103,9 +103,8 @@ function relaySpokenUpdate(relay, connected, theySaid, connectivity) {
   // Drop bare greetings/fillers so only what they actually said is read out.
   const parts = String(theySaid || '').split(' / ').map((x) => x.trim())
     .filter((x) => x && !/^(hello|hi|hmm+|ok(ay)?|haan|ha|yes|ji|namaskara|namaste)[.!?]*$/i.test(x)).map((x) => x.replace(/[.!?]+$/, ''));
-  return parts.length
-    ? `I called ${who} and told ${pronoun(who)}: "${relay.message}". ${who} said: ${parts.join('. ')}.`
-    : `I called ${who} and told ${pronoun(who)}: "${relay.message}". ${who} just acknowledged it and didn't say anything else.`;
+  // Only a plain "hello / okay" → no call-back (the WhatsApp summary is enough).
+  return parts.length ? `I called ${who} and told ${pronoun(who)}: "${relay.message}". ${who} said: ${parts.join('. ')}.` : null;
 }
 
 function summarizeTranscript(body) {
@@ -137,7 +136,8 @@ async function handleRelayWebhook(relayId, body) {
   }
   // Jarvis also calls sir back and tells him what they said (a short pause so sir isn't still on another call).
   try {
-    await require('./ownerCalls').requestOwnerCall('NOTICE', { data: { notice: relaySpokenUpdate(relay, connected, theySaid, connectivity) }, delayMs: 20000 });
+    const notice = relaySpokenUpdate(relay, connected, theySaid, connectivity);
+    if (notice) await require('./ownerCalls').requestOwnerCall('NOTICE', { data: { notice }, delayMs: 20000 });
   } catch {
     // best effort
   }
