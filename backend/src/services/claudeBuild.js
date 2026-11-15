@@ -67,7 +67,20 @@ async function requestBuild(clientId, { kind = 'website', instructions = null, s
       ...(['NOT_STARTED', 'PROMPT_READY', 'IN_REVIEW', 'READY'].includes(client.website_stage) ? { website_stage: 'IN_DEVELOPMENT' } : {}),
     },
   });
-  await logAction(client.id, 'CLAUDE_BUILD_STARTED',
+  // Let sir know on WhatsApp straight away.
+  try {
+    const waLinked = require('./waLinked');
+    if (config.ownerPhone && (await waLinked.hasSession())) {
+      await waLinked.sendText(config.ownerPhone, `🛠️ Sir, Claude has started building the ${KIND_LABEL[kind] || kind} for *${client.business_name}*.`
+        + `\nRepo: https://github.com/${client.github_repo}`
+        + `\nLive progress: ${runsUrl}`
+        + `${instructions ? `\nYour instructions: "${instructions.slice(0, 200)}"` : ''}`
+        + '\n\nI\'ll call you when it\'s done.');
+    }
+  } catch {
+    // notification is best-effort
+  }
+    await logAction(client.id, 'CLAUDE_BUILD_STARTED',
     `Claude is building the ${KIND_LABEL[kind] || kind} in ${client.github_repo} (requested from ${source})${instructions ? ` — "${instructions.slice(0, 200)}"` : ''}`);
   return updated;
 }
