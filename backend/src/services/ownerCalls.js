@@ -48,7 +48,7 @@ async function scheduleText({ days = 7, todayOnly = false } = {}) {
   return items
     .filter((i) => !todayOnly || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(i.start) === todayKey)
     .slice(0, 12)
-    .map((i) => `${i.title} ${i.allDay ? (todayOnly ? '(all day)' : `on ${fmt(i.start, true).split(',').slice(0, 2).join(',')}`) : `at ${fmt(i.start, !todayOnly)}`}`)
+    .map((i) => `${String(i.title).replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, '').trim()} ${i.allDay ? (todayOnly ? '(all day)' : `on ${fmt(i.start, true).split(',').slice(0, 2).join(',')}`) : `at ${fmt(i.start, !todayOnly)}`}`)
     .join('; ');
 }
 
