@@ -63,12 +63,23 @@ export default function ClientDetail() {
     }
   }
 
-  function sendWhatsApp(kind) {
+  async function sendWhatsApp(kind) {
+    // Linked WhatsApp → the server sends it automatically. Not linked → open your WhatsApp pre-filled.
+    setBusy('wa');
+    try {
+      await api(`/api/clients/${id}/whatsapp-send`, { method: 'POST', body: { kind } });
+      toast('Sent from your WhatsApp ✓', 'success');
+      reload();
+      return;
+    } catch (err) {
+      if (err.message !== 'not_linked') { toast(err.message, 'error'); return; }
+    } finally {
+      setBusy('');
+    }
     const text = kind === 'website' ? websiteMessage(c) : proposalMessage(c);
-    // Open first (synchronously) so the browser doesn't block the new tab, then record it.
     window.open(whatsappLink(c.phone_number, text), '_blank', 'noopener');
     api(`/api/clients/${id}/whatsapp-sent`, { method: 'POST', body: { kind } })
-      .then(() => { toast('WhatsApp opened with the message — press Send there', 'success'); reload(); })
+      .then(() => { toast('WhatsApp opened with the message — press Send there (link your WhatsApp to make this automatic)', 'success'); reload(); })
       .catch((err) => toast(err.message, 'error'));
   }
 
@@ -89,8 +100,8 @@ export default function ClientDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="btn-primary" onClick={() => sendWhatsApp('proposal')} title="Opens your WhatsApp with the proposal + meeting message typed in">
-            <Icon name="send" /> Send on WhatsApp
+          <button className="btn-primary" disabled={busy === 'wa'} onClick={() => sendWhatsApp('proposal')} title="Sends the proposal + meeting link from your WhatsApp">
+            <Icon name="send" /> {busy === 'wa' ? 'Sending…' : 'Send on WhatsApp'}
           </button>
           {c.website_url && (
             <button className="btn-ghost" onClick={() => sendWhatsApp('website')} title="Opens your WhatsApp with the website link message typed in">Send website link</button>

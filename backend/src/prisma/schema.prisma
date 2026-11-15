@@ -188,3 +188,13 @@ model OwnerCall {
   @@index([client_id])
   @@map("owner_calls")
 }
+
+// Linked-device session for sending from the owner's own WhatsApp (Baileys auth state).
+// Kept in Postgres because Render's disk is wiped on every deploy.
+model WaSession {
+  key        String   @id // "creds" or "<type>-<id>" signal keys
+  value      String   @db.Text
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("wa_session")
+}

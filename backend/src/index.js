@@ -12,6 +12,8 @@ const clientRoutes = require('./routes/clients');
 const campaignRoutes = require('./routes/campaigns');
 const approvalRoutes = require('./routes/approvals');
 const calendarRoutes = require('./routes/calendar');
+const whatsappLinkRoutes = require('./routes/whatsappLink');
+const waLinked = require('./services/waLinked');
 const { startOwnerCallWorker } = require('./services/ownerCalls');
 
 process.env.TZ = 'Asia/Kolkata'; // console timestamps in IST; all date math is explicit IST anyway
@@ -35,7 +37,7 @@ app.get('/', (req, res) => res.json({ service: 'Infinity Web & Apps — sales au
 app.get('/health', async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, db: 'up', integrations: config.isConfigured, time_ist: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) });
+    res.json({ ok: true, db: 'up', integrations: { ...config.isConfigured, whatsapp_linked: waLinked.isReady() }, time_ist: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) });
   } catch (err) {
     res.status(503).json({ ok: false, db: 'down', error: err.message });
   }
@@ -78,6 +80,7 @@ app.use('/api/campaigns', requireAdmin, campaignRoutes);
 app.use('/api/campaign', requireAdmin, campaignRoutes);
 app.use('/api/approvals', requireAdmin, approvalRoutes);
 app.use('/api/calendar', requireAdmin, calendarRoutes);
+app.use('/api/whatsapp', requireAdmin, whatsappLinkRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -94,6 +97,7 @@ const server = app.listen(config.port, () => {
   console.log(`   Webhook: ${config.publicBaseUrl}/webhook/sarvam${config.webhookSecret ? '?secret=…' : ''}`);
   console.log('   Integrations:', config.isConfigured);
   startOwnerCallWorker();
+  waLinked.resumeIfLinked().catch((err) => console.error('[whatsapp] resume failed:', err.message));
   if (!config.adminToken) console.warn('⚠️  ADMIN_TOKEN not set — dashboard API is open. Set it in production.');
 });
 

@@ -22,12 +22,15 @@
   "dependencies": {
     "@fontsource/inter": "^5.1.1",
     "@prisma/client": "^5.22.0",
+    "@whiskeysockets/baileys": "^6.7.21",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "fontkit": "^1.9.0",
     "googleapis": "^144.0.0",
     "pdfkit": "^0.15.2",
-    "prisma": "^5.22.0"
+    "pino": "^9.5.0",
+    "prisma": "^5.22.0",
+    "qrcode": "^1.5.4"
   }
 }

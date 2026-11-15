@@ -8,6 +8,8 @@ const { sendWhatsAppMessage } = require('../services/whatsapp');
 const { requestOwnerCall } = require('../services/ownerCalls');
 const { generateWebsitePrompt } = require('../services/websitePrompt');
 const { createClientRepo } = require('../services/github');
+const waLinked = require('../services/waLinked');
+const { sendWebsiteReadyMessage } = require('../services/whatsapp');
 const STAGES = ['NOT_STARTED', 'PROMPT_READY', 'IN_DEVELOPMENT', 'IN_REVIEW', 'READY', 'DELIVERED'];
 
 const router = express.Router();
@@ -154,6 +156,39 @@ router.post('/:id/reschedule', async (req, res, next) => {
     res.json({ ok: true, meet, whatsapp, client: updated });
   } catch (err) {
     await logError(req.params.id, 'RESCHEDULE', err);
+    next(err);
+  }
+});
+
+// POST /api/clients/:id/whatsapp-send { kind: proposal|website } — send automatically from the linked WhatsApp
+router.post('/:id/whatsapp-send', async (req, res, next) => {
+  try {
+    const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    if (!(await waLinked.hasSession())) return res.status(409).json({ error: 'not_linked' });
+    const website = req.body?.kind === 'website';
+    try {
+      if (website) {
+        if (!client.website_url) return res.status(400).json({ error: 'No website link saved for this client' });
+        await sendWebsiteReadyMessage(client, client.website_url);
+      } else {
+        const latest = await prisma.proposal.findFirst({ where: { client_id: client.id }, orderBy: { created_at: 'desc' } });
+        await sendWhatsAppMessage(client, client.proposal_url, client.meeting_link, client.meeting_time, { proposalNumber: latest?.number });
+      }
+    } catch (err) {
+      await logError(client.id, 'WHATSAPP_SEND', err);
+      return res.status(502).json({ error: err.message });
+    }
+    const data = website
+      ? { website_sent: true, website_stage: 'DELIVERED' }
+      : { proposal_sent: true, ...(['CONVERTED', 'LOST'].includes(client.portal_status) ? {} : { portal_status: client.meeting_link ? 'MEETING_SCHEDULED' : 'PROPOSAL_SENT' }) };
+    const updated = await prisma.client.update({ where: { id: client.id }, data });
+    await prisma.ownerCall.updateMany({
+      where: { client_id: client.id, type: website ? 'WEBSITE' : 'QUOTATION', status: { in: ['QUEUED', 'NEEDS_MANUAL', 'FAILED'] } },
+      data: { status: 'SENT', decided_at: new Date(), decision_note: 'Sent from your linked WhatsApp' },
+    });
+    res.json({ ok: true, client: updated });
+  } catch (err) {
     next(err);
   }
 });

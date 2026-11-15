@@ -2,6 +2,7 @@ const config = require('../lib/config');
 const { logAction } = require('../lib/logger');
 const { formatMeetingTime } = require('../lib/time');
 const { toWhatsAppId } = require('../lib/phone');
+const waLinked = require('./waLinked');
 
 const hasDocumentHeader = () => (process.env.WHATSAPP_TEMPLATE_HAS_DOCUMENT || 'true') !== 'false';
 
@@ -14,9 +15,9 @@ Thanks for your time today — really great speaking with you!
 Here's your personalised website proposal for *${businessName}*:
 📄 ${proposalUrl}
 
-We've also scheduled your *FREE 30-minute consultation*:
+Your *FREE 30-minute consultation* with our founder is booked:
 📅 ${meetTime}
-🔗 ${meetLink}
+🔗 Join here: ${meetLink}
 
 We'll walk you through exactly what your website will look like, answer all your questions, and get things moving fast! 🚀
 
@@ -57,6 +58,13 @@ async function sendWhatsAppMessage(client, proposalUrl, meetLink, meetTime, { pr
     meetLink: meetLink || 'Link will be shared shortly',
   };
   const to = toWhatsAppId(client.phone_number);
+
+  // Linked phone WhatsApp takes priority: plain text, no template needed.
+  if (await waLinked.hasSession()) {
+    const messageId = await waLinked.sendText(to, buildMessageText(vars));
+    await logAction(client.id, 'WHATSAPP_SENT', `Sent from your WhatsApp to +${to} (proposal + meeting link)`);
+    return { mock: false, messageId, via: 'linked' };
+  }
 
   if (!config.isConfigured.whatsapp) {
     await logAction(client.id, 'WHATSAPP_SENT_MOCK',
@@ -125,6 +133,12 @@ async function sendWebsiteReadyMessage(client, websiteUrl) {
     websiteUrl,
   };
   const to = toWhatsAppId(client.phone_number);
+
+  if (await waLinked.hasSession()) {
+    const messageId = await waLinked.sendText(to, buildWebsiteText(vars));
+    await logAction(client.id, 'WEBSITE_LINK_SENT', `Sent website link ${websiteUrl} from your WhatsApp to +${to}`);
+    return { mock: false, messageId, via: 'linked' };
+  }
 
   if (!config.isConfigured.whatsapp) {
     await logAction(client.id, 'WEBSITE_LINK_SENT_MOCK',
