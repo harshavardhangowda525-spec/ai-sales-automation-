@@ -13,6 +13,7 @@ const campaignRoutes = require('./routes/campaigns');
 const approvalRoutes = require('./routes/approvals');
 const calendarRoutes = require('./routes/calendar');
 const whatsappLinkRoutes = require('./routes/whatsappLink');
+const contactRoutes = require('./routes/contacts');
 const waLinked = require('./services/waLinked');
 const { startOwnerCallWorker } = require('./services/ownerCalls');
 
@@ -27,7 +28,7 @@ app.use(cors({
     if (!origin || config.frontendUrls.includes(origin.replace(/\/$/, ''))) return cb(null, true);
     return cb(null, false);
   },
-  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json({ limit: '5mb' }));
@@ -81,6 +82,7 @@ app.use('/api/campaign', requireAdmin, campaignRoutes);
 app.use('/api/approvals', requireAdmin, approvalRoutes);
 app.use('/api/calendar', requireAdmin, calendarRoutes);
 app.use('/api/whatsapp', requireAdmin, whatsappLinkRoutes);
+app.use('/api/contacts', requireAdmin, contactRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

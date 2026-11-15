@@ -366,6 +366,7 @@ async function decide(callId, decision, note, source = 'dashboard') {
 /** Sarvam post-call webhook for calls to Harshavardhan. */
 async function handleOwnerWebhook(body = {}) {
   const meta = body.webhook_config?.metadata || body.metadata || {};
+  if (meta.relay_call_id) return require('./relayCalls').handleRelayWebhook(meta.relay_call_id, body);
   let call = meta.owner_call_id ? await prisma.ownerCall.findUnique({ where: { id: meta.owner_call_id } }) : null;
   if (!call && body.attempt_id) call = await prisma.ownerCall.findFirst({ where: { attempt_id: body.attempt_id } });
   if (!call) return { ignored: true };

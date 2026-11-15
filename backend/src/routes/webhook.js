@@ -107,6 +107,10 @@ async function jarvisContext(req, res) {
       return res.json({ ...v, agent_variables: v, caller_is_owner: 'yes', direction: 'inbound' });
     }
 
+    // Jarvis is calling one of sir's contacts on his behalf → give him the relay script.
+    const relayVars = await require('../services/relayCalls').activeRelayFor(caller);
+    if (relayVars) return res.json({ ...relayVars, agent_variables: relayVars, caller_is_owner: 'no', direction: 'relay' });
+
     let note = 'unknown number';
     if (caller) {
       const client = await prisma.client.findFirst({ where: { phone_number: caller }, orderBy: { created_at: 'desc' } });
@@ -415,6 +419,30 @@ async function jarvisAddClient(req, res) {
   }
 }
 router.post('/sarvam/jarvis-add-client', verifySecret, jarvisAddClient);
+
+// POST /webhook/sarvam/jarvis-call-contact { contact, message, phone?, caller }
+// "Call my mom and tell her I'll be late today."
+async function jarvisCallContact(req, res) {
+  const { src, isOwner } = toolInput(req);
+  if (!isOwner) return res.json({ answer: 'Only sir can ask me to call people.' });
+  try {
+    const relayCalls = require('../services/relayCalls');
+    const who = src.contact || src.name || src.person;
+    const message = String(src.message || '').trim();
+    if (!who) return res.json({ answer: 'Who should I call, sir?' });
+    if (!message) return res.json({ answer: `What should I tell ${who}, sir?` });
+    const contact = await relayCalls.findContact(who);
+    if (!contact && !src.phone) {
+      return res.json({ answer: `I don't have a number saved for ${who}, sir. Add them under Contacts in the dashboard, or tell me their number.` });
+    }
+    const relay = await relayCalls.callContact({ contact, phone: src.phone, name: who, message });
+    return res.json({ answer: `Calling ${relay.to_name} now, sir. I'll tell them "${message}" and WhatsApp you what they say.` });
+  } catch (err) {
+    await logError(null, 'JARVIS_CALL_CONTACT', err);
+    return res.json({ answer: `I couldn't place that call, sir: ${err.message}` });
+  }
+}
+router.post('/sarvam/jarvis-call-contact', verifySecret, jarvisCallContact);
 
 // POST /webhook/sarvam/jarvis-calendar { title, when, minutes?, client?, caller } — plain calendar entry for sir
 async function jarvisCalendar(req, res) {

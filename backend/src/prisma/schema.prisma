@@ -212,3 +212,37 @@ model WaSession {
 
   @@map("wa_session")
 }
+
+// Personal contacts Jarvis can call on sir's behalf ("call my mom and say I'll be late").
+model Contact {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String           // "Mom"
+  aliases    String?          // comma-separated: "mother, amma, mummy"
+  phone      String           // E.164
+  notes      String?  @db.Text // context Jarvis may use when answering, e.g. "Speak in Kannada"
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  relay_calls RelayCall[]
+
+  @@map("contacts")
+}
+
+// A call Jarvis places to someone to pass on sir's message.
+model RelayCall {
+  id         String   @id @default(uuid()) @db.Uuid
+  contact_id String?  @db.Uuid
+  to_name    String
+  to_phone   String
+  message    String   @db.Text
+  status     String   @default("calling") // calling | done | no_answer | failed
+  attempt_id String?
+  summary    String?  @db.Text
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  contact Contact? @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+
+  @@index([to_phone, status])
+  @@map("relay_calls")
+}

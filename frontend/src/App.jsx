@@ -8,6 +8,7 @@ import ClientDetail from './pages/ClientDetail';
 import Campaigns from './pages/Campaigns';
 import Calendar from './pages/Calendar';
 import WhatsApp from './pages/WhatsApp';
+import Contacts from './pages/Contacts';
 import { api, AuthError, clearToken, setToken, getToken } from './lib/api';
 
 function Login({ onDone }) {
@@ -62,6 +63,7 @@ export default function App() {
             <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/whatsapp" element={<WhatsApp />} />
+            <Route path="/contacts" element={<Contacts />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
