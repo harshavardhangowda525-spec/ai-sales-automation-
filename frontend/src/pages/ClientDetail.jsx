@@ -167,7 +167,14 @@ export default function ClientDetail() {
             <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field label="Business">{c.business_name}</Field>
               <Field label="Contact">{c.contact_name}</Field>
-              <Field label="Phone">{c.phone_number}</Field>
+              <Field label="Phone">
+                {c.phone_number}{' '}
+                <button className="ml-1 text-xs text-blue-400 hover:underline" disabled={busy === 'update'}
+                  onClick={() => {
+                    const v = window.prompt(`Phone number for ${c.business_name} (10 digits)`, c.phone_number === '-' ? '' : c.phone_number);
+                    if (v !== null) update({ phone_number: v }, 'Phone number saved');
+                  }}>Edit</button>
+              </Field>
               <Field label="Plan interest">{PLAN_LABEL[c.plan_interest]}</Field>
               <Field label="Preferred time">{c.preferred_time}</Field>
               <Field label="Call duration">{c.duration_seconds != null ? `${Math.floor(c.duration_seconds / 60)}m ${c.duration_seconds % 60}s` : null}</Field>

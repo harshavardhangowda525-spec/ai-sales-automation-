@@ -86,11 +86,16 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// PATCH /api/clients/:id — update notes / portal status / plan / contact name
+// PATCH /api/clients/:id — update notes / portal status / plan / contact name / phone
 router.patch('/:id', async (req, res, next) => {
   try {
-    const { notes, portal_status, plan_interest, contact_name, website_stage, website_preview_url, email } = req.body;
+    const { notes, portal_status, plan_interest, contact_name, website_stage, website_preview_url, email, phone_number } = req.body;
     const data = {};
+    if (phone_number !== undefined) {
+      const digits = String(phone_number || '').replace(/\D/g, '').replace(/^(91|0)(?=\d{10}$)/, '');
+      if (digits && digits.length !== 10) return res.status(400).json({ error: 'Phone number must have 10 digits' });
+      data.phone_number = digits ? `+91${digits}` : '-';
+    }
     if (email !== undefined) {
       const e = String(email || '').trim().toLowerCase();
       if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return res.status(400).json({ error: 'That email address looks wrong' });
