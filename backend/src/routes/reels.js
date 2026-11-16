@@ -5,14 +5,14 @@ const config = require('../lib/config');
 const reels = require('../services/reels');
 
 const router = express.Router();
-const OMIT_VIDEO = { video: false };
+const OMIT_VIDEO = { video: true }; // true = leave the MP4 bytes out (never send them as JSON)
 
 // GET /api/reels — latest reels + settings
 router.get('/', async (req, res, next) => {
   try {
     const list = await prisma.reel.findMany({ orderBy: { day: 'desc' }, take: 30, omit: OMIT_VIDEO });
     res.json({
-      reels: list.map((r) => ({ ...r, video_url: r.video_size ? reels.reelVideoUrl(r) : null })),
+      reels: list.map(({ video, ...r }) => ({ ...r, video_url: r.video_size ? reels.reelVideoUrl(r) : null })),
       settings: {
         enabled: config.isConfigured.reels,
         instagram_connected: config.isConfigured.instagram || Boolean(await reels.getSetting('instagram_token')),
