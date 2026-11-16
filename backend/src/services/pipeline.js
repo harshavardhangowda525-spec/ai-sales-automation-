@@ -59,6 +59,10 @@ function normalizePayload(body = {}) {
     metadataCampaignId: body.metadata?.campaign_id || body.webhook_config?.metadata?.campaign_id || null,
     contactName: vars.contact_name || vars.customer_name || null,
     planHint: vars.plan_interest || vars.plan || null,
+    // The sales agent can set these output variables so the Meet lands exactly when the lead agreed.
+    slotHint: String(vars.meeting_slot || vars.preferred_slot || '').toLowerCase() || null,
+    dayHint: String(vars.meeting_day || vars.preferred_day || '').toLowerCase() || null,
+    requirementsHint: vars.requirements || vars.business_type || null,
   };
 }
 
@@ -230,6 +234,19 @@ async function processCall({ client, payload, outcomeKnown }) {
     } catch (err) {
       await logError(client.id, 'TRANSCRIPT_PARSE', err);
     }
+  }
+
+  // Agent-provided meeting slot/day win over guesses from the transcript.
+  if (['morning', 'afternoon', 'evening'].includes(payload.slotHint)) prefs.preferred_slot = payload.slotHint;
+  if (payload.dayHint) {
+    const offset = /day.?after/.test(payload.dayHint) ? 2 : /tomorrow/.test(payload.dayHint) ? 1 : /today/.test(payload.dayHint) ? 0 : null;
+    if (offset !== null) {
+      const d = new Date(Date.now() + 5.5 * 3600000 + offset * 86400000);
+      prefs.preferred_date = d.toISOString().slice(0, 10);
+    }
+  }
+  if (payload.requirementsHint && !client.requirements) {
+    client = await prisma.client.update({ where: { id: client.id }, data: { requirements: String(payload.requirementsHint).slice(0, 2000) } });
   }
 
   // 2. Outcome-specific automation
