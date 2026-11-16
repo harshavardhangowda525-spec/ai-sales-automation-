@@ -3,7 +3,7 @@
   "private": true,
   "description": "Daily Instagram reels for Infinity Web & Apps — coded motion graphics (Remotion)",
   "scripts": {
-    "render": "remotion render src/index.ts Reel out/reel.mp4 --codec h264 --crf 20",
+    "render": "remotion render src/index.ts Reel out/reel.mp4 --codec h264 --crf 26",
     "still": "remotion still src/index.ts Reel out/cover.jpg --frame 45"
   },
   "dependencies": {

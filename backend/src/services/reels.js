@@ -102,10 +102,10 @@ jobs:
 
       - name: Render the reel
         run: |
-          if ! npx remotion render src/index.ts Reel out/reel.mp4 --codec h264 --crf 20 --timeout 120000; then
+          if ! npx remotion render src/index.ts Reel out/reel.mp4 --codec h264 --crf 26 --timeout 120000; then
             echo "::warning::Today's reel didn't render — falling back to the last good version"
             git checkout \${{ github.sha }} -- src reel.json
-            npx remotion render src/index.ts Reel out/reel.mp4 --codec h264 --crf 20 --timeout 120000
+            npx remotion render src/index.ts Reel out/reel.mp4 --codec h264 --crf 26 --timeout 120000
           fi
           ls -la out
 

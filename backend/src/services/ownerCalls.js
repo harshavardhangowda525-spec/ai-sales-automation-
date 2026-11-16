@@ -328,6 +328,11 @@ async function processQueue() {
     const timeout = new Date(Date.now() - config.ownerCalls.resultTimeoutMinutes * 60000);
     const stale = await prisma.ownerCall.findMany({ where: { status: 'CALLING', called_at: { lt: timeout } } });
     for (const s of stale) await scheduleRetryOrManual(s.id, 'No call result received');
+    // A call cut off by a server restart before it reached Sarvam (no attempt id) is simply dialled again.
+    await prisma.ownerCall.updateMany({
+      where: { status: 'CALLING', attempt_id: null, called_at: { lt: new Date(Date.now() - 90 * 1000) } },
+      data: { status: 'QUEUED', next_attempt_at: new Date() },
+    });
 
     if (!config.isConfigured.ownerCalls) return;
     await require('./campaignCallSync').syncCampaignCalls().catch((err) => logError(null, 'CAMPAIGN_CALL_SYNC', err));
