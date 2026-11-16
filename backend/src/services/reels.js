@@ -269,6 +269,8 @@ function reelVideoUrl(reel) {
 async function handleReelUpload({ reelId, video, meta, runUrl, failed }) {
   const reel = await prisma.reel.findUnique({ where: { id: reelId } });
   if (!reel) return { ignored: true };
+  // A late/duplicate run must not replace a reel that's already ready, approved or posted.
+  if (reel.status !== 'generating' && reel.status !== 'failed') return { ignored: true, status: reel.status };
   if (failed) {
     await prisma.reel.update({ where: { id: reel.id }, data: { status: 'failed', error: 'The reel workflow failed', run_url: runUrl || reel.run_url } });
     await notifyOwner(`⚠️ Sir, today's reel couldn't be made. Details: ${runUrl || reel.run_url}\nTell Jarvis "make today's reel again" to retry.`);

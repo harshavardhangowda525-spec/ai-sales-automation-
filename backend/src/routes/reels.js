@@ -67,4 +67,17 @@ router.post('/:id/post-now', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /api/reels/upload?topic=…  (raw MP4 body, caption in X-Reel-Meta as base64 JSON) — manual/backup upload
+router.post('/upload', express.raw({ type: 'video/mp4', limit: '80mb' }), async (req, res, next) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || req.body.length < 10000) return res.status(400).json({ error: 'Send the MP4 as the request body (Content-Type: video/mp4)' });
+    const day = reels.todayIST();
+    let reel = await prisma.reel.findUnique({ where: { day } });
+    if (!reel) reel = await prisma.reel.create({ data: { day, topic: reels.topicFor(day) } });
+    if (['posting', 'posted'].includes(reel.status)) return res.status(409).json({ error: `Today's reel is already ${reel.status}` });
+    await prisma.reel.update({ where: { id: reel.id }, data: { status: 'generating' } });
+    res.json(await reels.handleReelUpload({ reelId: reel.id, video: req.body, meta: req.get('x-reel-meta'), runUrl: req.get('x-run-url') || null }));
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
