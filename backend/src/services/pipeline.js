@@ -21,7 +21,8 @@ function normalizeOutcome(raw) {
   if (OUTCOMES.includes(v)) return v;
   if (['CALLBACK', 'CALL_BACK', 'CALL_BACK_LATER', 'FOLLOW_UP'].includes(v)) return 'CALLBACK_LATER';
   if (['NOT_INTERESTED', 'DECLINED'].includes(v)) return 'REJECTED';
-  if (['NOANSWER', 'NOT_ANSWERED', 'BUSY', 'FAILED', 'UNREACHABLE'].includes(v)) return 'NO_ANSWER';
+  if (['NOANSWER', 'NOT_ANSWERED', 'BUSY', 'FAILED', 'UNREACHABLE', 'VOICEMAIL', 'IVR', 'NO_RESPONSE'].includes(v)) return 'NO_ANSWER';
+  if (['WRONG_NUMBER', 'INVALID_NUMBER', 'DO_NOT_CALL', 'DND'].includes(v)) return 'REJECTED';
   if (['MEETING_BOOKED', 'INTERESTED', 'YES', 'CONVERTED'].includes(v)) return 'BOOKED';
   return null;
 }

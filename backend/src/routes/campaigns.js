@@ -36,6 +36,15 @@ router.post('/start', async (req, res, next) => {
   }
 });
 
+// POST /api/campaigns/sync — pull finished campaign calls from Sarvam right now
+router.post('/sync', async (req, res, next) => {
+  try {
+    res.json(await require('../services/campaignCallSync').syncCampaignCalls({ force: true }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/campaign/:id — only for campaigns that never reached Sarvam and have no calls/clients
 router.delete('/:id', async (req, res, next) => {
   try {

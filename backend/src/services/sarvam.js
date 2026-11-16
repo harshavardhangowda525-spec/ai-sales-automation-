@@ -91,6 +91,7 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
       cohort_id: cohort_id || null,
       agent_id: appId || null,
       total_calls: contacts.length,
+      contacts: contacts.slice(0, 1000).map((c) => ({ phone: toE164(c.phone_number), business_name: c.business_name || null })),
     },
   });
 
@@ -221,4 +222,22 @@ async function getSarvamCampaign(sarvamCampaignId) {
   return sarvamRequest('GET', `/scheduling/v1/orgs/${orgId}/workspaces/${workspaceId}/campaigns/${sarvamCampaignId}`);
 }
 
-module.exports = { startCampaign, triggerSummaryCall, placeOutboundCall, getSarvamCampaign };
+/** Finished calls of a Sarvam agent in a time window (analytics API). */
+async function listInteractions(appId, from, to = new Date(Date.now() + 3600000)) {
+  const { orgId, workspaceId } = base();
+  const iso = (d) => d.toISOString().slice(0, 19);
+  const out = [];
+  for (let offset = 0; offset < 2000; offset += 100) {
+    const page = await sarvamRequest('GET', `/analytics/v1/${orgId}/${workspaceId}/${appId}/interactions?start_datetime=${iso(from)}&end_datetime=${iso(to)}&limit=100&offset=${offset}`);
+    out.push(...(page.items || []));
+    if (!page.items || page.items.length < 100) break;
+  }
+  return out;
+}
+
+async function getTrace(appId, interactionId) {
+  const { orgId, workspaceId } = base();
+  return sarvamRequest('GET', `/analytics/v1/${orgId}/${workspaceId}/${appId}/traces/${encodeURIComponent(interactionId)}`);
+}
+
+module.exports = { startCampaign, triggerSummaryCall, placeOutboundCall, getSarvamCampaign, listInteractions, getTrace };

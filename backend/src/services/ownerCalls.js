@@ -321,6 +321,7 @@ async function processQueue() {
     for (const s of stale) await scheduleRetryOrManual(s.id, 'No call result received');
 
     if (!config.isConfigured.ownerCalls) return;
+    await require('./campaignCallSync').syncCampaignCalls().catch((err) => logError(null, 'CAMPAIGN_CALL_SYNC', err));
     await pollSarvamCampaigns().catch((err) => logError(null, 'CAMPAIGN_STATUS_POLL', err));
     await maybeAutoUpdate().catch((err) => logError(null, 'AUTO_UPDATE', err));
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;
