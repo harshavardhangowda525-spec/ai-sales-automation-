@@ -251,4 +251,4 @@ async function dispatchBuild(fullName, prompt, mode = 'build') {
   return `${repo.html_url}/actions/workflows/claude-build.yml`;
 }
 
-module.exports = { createClientRepo, slugify, putFile, ensureBuildSetup, dispatchBuild, setRepoSecret, BUILD_WORKFLOW };
+module.exports = { createClientRepo, slugify, putFile, ensureBuildSetup, dispatchBuild, setRepoSecret, BUILD_WORKFLOW, gh };

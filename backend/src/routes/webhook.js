@@ -448,6 +448,7 @@ async function jarvisBuild(req, res) {
   if (!client && !wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
   // build_project doubles as deploy / send-quotation / call-a-person, so no new tools are needed in the Sarvam editor.
   const intent = `${src.kind || ''} ${src.action || ''} ${src.instructions || ''}`.toLowerCase();
+  if (/\breels?\b|instagram/.test(intent)) return reelFor(intent, src, res);
   if (/^\s*(call|phone call|relay)\b/.test(String(src.kind || '').toLowerCase())) {
     const spoken = String(src.instructions || '').replace(/[^\d+]/g, '');
     return relayFor(wanted, src.instructions || src.message, src.phone || (spoken.match(/(?:\+?91)?[6-9]\d{9}/) || [])[0], res);
@@ -520,6 +521,31 @@ async function quotationFor(client, src, res) {
     });
   } catch (err) {
     return res.json({ answer: err.status === 400 ? err.message : `I couldn't do the quotation, sir: ${err.message}.` });
+  }
+}
+
+/** Reel actions through build_project (approve / redo / reject / make). */
+async function reelFor(intent, src, res) {
+  const reels = require('../services/reels');
+  try {
+    if (/reject|skip|cancel|don.?t post|\bno\b/.test(intent)) {
+      await reels.rejectReel(null, { source: 'Jarvis call' });
+      return res.json({ answer: "Okay sir, I won't post today's reel." });
+    }
+    if (/redo|again|change|remake|new/.test(intent)) {
+      const open = await reels.latestOpenReel();
+      await reels.requestReel({ day: open?.day || reels.todayIST(), instructions: src.instructions || 'Make a different, more eye-catching version', source: 'Jarvis call' });
+      return res.json({ answer: "Sure sir, Claude is making the reel again with your changes. I'll send it to you on WhatsApp and call you when it's ready." });
+    }
+    if (/make|create|start|generate/.test(intent) && !/approv|post/.test(intent)) {
+      await reels.requestReel({ instructions: src.instructions || null, source: 'Jarvis call' });
+      return res.json({ answer: "Claude has started making today's reel, sir. I'll send it to you and call you for approval when it's ready." });
+    }
+    const r = await reels.approveReel(null, 'Jarvis call');
+    const later = r.day === reels.todayIST() && Date.now() < reels.postTimeToday().getTime() ? ' at 7:30 PM' : ' now';
+    return res.json({ answer: `Approved, sir. I'll post the reel on Instagram${later} and WhatsApp you the link.` });
+  } catch (err) {
+    return res.json({ answer: err.status && err.status < 500 ? `${err.message}, sir.` : `I couldn't do that, sir: ${err.message}.` });
   }
 }
 

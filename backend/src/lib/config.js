@@ -77,6 +77,20 @@ const config = {
   claudeCodeToken: env('CLAUDE_CODE_OAUTH_TOKEN'),
   // Vercel: auto-deploy each finished client build to a free *.vercel.app preview
   vercel: { token: env('VERCEL_TOKEN'), scope: env('VERCEL_SCOPE') },
+  // Instagram: daily coded reel, approved by sir, posted at 7:30 PM IST
+  instagram: {
+    token: env('INSTAGRAM_ACCESS_TOKEN'),          // Instagram Login API token (IGAA…); refreshed automatically
+    userId: env('INSTAGRAM_USER_ID'),              // optional — read from /me when empty
+    graph: env('INSTAGRAM_GRAPH_BASE', 'https://graph.instagram.com/v23.0').replace(/\/$/, ''),
+  },
+  reels: {
+    enabled: env('REELS_ENABLED', 'true') === 'true',
+    repo: env('REELS_REPO'),                       // owner/name; created as <owner>/iwa-reels when empty
+    prepareHour: Number(env('REELS_PREPARE_HOUR', 17)), // IST — Claude starts the reel at 5 PM
+    postHour: Number(env('REELS_POST_HOUR', 19)),
+    postMinute: Number(env('REELS_POST_MINUTE', 30)),
+    ctaPhone: env('REELS_CTA_PHONE'),              // shown in the reel; defaults to HARSHAVARDHAN_PHONE
+  },
 
   // GitHub: one private repo per client website (fine-grained token with Administration + Contents write)
   github: {
@@ -102,6 +116,8 @@ config.isConfigured = {
   claudeBuilds: Boolean(config.github.token && config.claudeCodeToken),
   clientPortal: Boolean(config.clientPortalUrl && config.portalIntegrationSecret),
   vercelPreviews: Boolean(config.vercel.token),
+  reels: Boolean(config.reels.enabled && config.github.token && config.claudeCodeToken),
+  instagram: Boolean(config.instagram.token),
 };
 
 module.exports = config;

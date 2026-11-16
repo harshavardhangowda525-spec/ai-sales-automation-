@@ -32,7 +32,7 @@ function buildVariables(call, client) {
     booked_count: '-', booked_names: '-', callback_count: '-', rejected_count: '-', no_answer_count: '-', meets_scheduled: '-',
     campaign_name: '-', period: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-', today_schedule: '-', notice: '-',
   };
-  if (['SUMMARY', 'UPDATE', 'NOTICE'].includes(call.type)) Object.assign(base, call.data || {});
+  if (['SUMMARY', 'UPDATE', 'NOTICE', 'REEL'].includes(call.type)) Object.assign(base, call.data || {});
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
 }
 
@@ -107,6 +107,11 @@ async function buildJarvisContext() {
         + `${c.website_preview_url ? `; live preview ${c.website_preview_url}` : '; no live link yet'}`);
     }
   }
+  const reel = await prisma.reel.findFirst({ orderBy: { day: 'desc' }, select: { day: true, status: true, topic: true, ig_permalink: true } }).catch(() => null);
+  if (reel) {
+    const rs = { generating: 'Claude is making it now', ready: 'READY — waiting for sir\'s approval', approved: 'approved, posts at 7:30 PM', rejected: 'rejected', posting: 'posting now', posted: `posted${reel.ig_permalink ? ` (${reel.ig_permalink})` : ''}`, failed: 'FAILED' };
+    lines.push(`Instagram reel for ${reel.day}: ${rs[reel.status] || reel.status}${reel.topic ? ` — topic: ${String(reel.topic).split(/[—:]/)[0].trim()}` : ''}.`);
+  }
   const contacts = await prisma.contact.findMany({ orderBy: { name: 'asc' }, take: 15 });
   lines.push(contacts.length
     ? `Sir's personal contacts (NOT clients): ${contacts.map((c) => `${c.name}${c.aliases ? ` (${c.aliases})` : ''}`).join('; ')}.`
@@ -127,6 +132,7 @@ const JARVIS_RULES = [
   '  1) BUILD — sir says build / make / rebuild / change the website: call build_project with the client and his instructions. Claude builds it; you call sir when it is built.',
   '  2) DEPLOY — sir says deploy / publish / make it live / send me the link: call build_project with kind = "deploy". It goes live on a preview link; sir gets the link on WhatsApp and you call him.',
   '  3) QUOTATION — two steps. (a) Sir says prepare / send the quotation (or proposal): call build_project with kind = "quotation" (put any phone number sir gives in instructions). It is sent to SIR on WhatsApp only. Then ask: "Shall I send it to the client?" (b) Only when sir clearly says yes / approve / send it to the client: call build_project with kind = "approve quotation". Never send to the client without that yes.',
+  '- INSTAGRAM REEL: when sir approves the reel ("yes, post it"), call build_project with kind = "approve reel". To make it again with changes: kind = "redo reel" and instructions = his changes. To skip today: kind = "reject reel". To make one now: kind = "make reel".',
   '- CALLING SOMEONE: you CAN make phone calls. When sir says "call my mom / amma / <name> and tell her …", call send_whatsapp with client = that person (e.g. "Mom") and message = "CALL: " + sir\'s message (e.g. "CALL: I\'ll be late today"). You will phone them and pass it on. Without "CALL:" it is only a WhatsApp. Never add family or friends as clients.',
   '- After any tool call, repeat what the tool answered — that is the truth. If it says something failed or is missing, tell sir exactly that.',
   '- If sir does not name the client and only one project is listed above, use that one — do not ask "which client?". Ask only if several could match, and never ask the same question twice: act on your best guess.',
@@ -162,6 +168,9 @@ function buildSpokenMessage(call, vars) {
   } else if (call.type === 'NOTICE') {
     parts.push(call.data?.notice || vars.notice || 'I have an update for you, sir.');
     parts.push('Anything you want me to do about it?');
+  } else if (call.type === 'REEL') {
+    parts.push(call.data?.notice || "Today's Instagram reel is ready, sir — I've sent it to your WhatsApp.");
+    parts.push('Say yes and I will post it, or tell me what to change.');
   } else if (call.type === 'QUOTATION') {
     parts.push(`A new client just booked, sir: ${vars.business_name}${vars.contact_name !== '-' ? `, contact ${vars.contact_name}` : ''}.`);
     parts.push(`They're interested in the ${vars.plan_name} plan${vars.plan_price !== '-' ? ` at ${vars.plan_price}` : ''}.`);
@@ -322,6 +331,7 @@ async function processQueue() {
 
     if (!config.isConfigured.ownerCalls) return;
     await require('./campaignCallSync').syncCampaignCalls().catch((err) => logError(null, 'CAMPAIGN_CALL_SYNC', err));
+    await require('./reels').reelsTick().catch((err) => logError(null, 'REELS_TICK', err));
     await pollSarvamCampaigns().catch((err) => logError(null, 'CAMPAIGN_STATUS_POLL', err));
     await maybeAutoUpdate().catch((err) => logError(null, 'AUTO_UPDATE', err));
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;
@@ -330,7 +340,7 @@ async function processQueue() {
     // Then summaries, then approvals in the order they were requested — only during calling hours.
     const due = { status: 'QUEUED', next_attempt_at: { lte: new Date() } };
     // Build/deploy news (NOTICE) also goes out right away — sir is waiting for it.
-    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: { in: ['UPDATE', 'NOTICE'] } }, orderBy: { created_at: 'asc' } });
+    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: { in: ['UPDATE', 'NOTICE', 'REEL'] } }, orderBy: { created_at: 'asc' } });
     if (!next && inCallingHours()) {
       next = await prisma.ownerCall.findFirst({ where: due, orderBy: [{ type: 'asc' }, { created_at: 'asc' }] });
     }
@@ -371,6 +381,9 @@ async function executeApproved(callId) {
           ...(['CONVERTED', 'LOST'].includes(client.portal_status) ? {} : { portal_status: client.meeting_link ? 'MEETING_SCHEDULED' : 'PROPOSAL_SENT' }),
         },
       });
+    } else if (call.type === 'REEL') {
+      const reel = call.data?.reel_id ? await prisma.reel.findUnique({ where: { id: call.data.reel_id } }) : null;
+      if (reel?.status === 'ready') await require('./reels').approveReel(reel.id, 'the call');
     } else if (call.type === 'WEBSITE') {
       const url = call.data?.website_url || client.website_url;
       if (!url) throw new Error('No website URL recorded');

@@ -8,6 +8,7 @@ const NAV = [
   { to: '/campaigns', label: 'Campaigns', icon: 'phone' },
   { to: '/whatsapp', label: 'WhatsApp', icon: 'send' },
   { to: '/contacts', label: 'Contacts', icon: 'users' },
+  { to: '/reels', label: 'Reels', icon: 'send' },
 ];
 
 const linkClass = ({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${

@@ -31,6 +31,44 @@ app.use(cors({
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+// Daily reel upload from GitHub Actions (raw MP4) — must come before the JSON parser.
+app.post('/webhook/reels/upload', express.raw({ type: '*/*', limit: '80mb' }), async (req, res) => {
+  try {
+    if (config.webhookSecret && req.query.secret !== config.webhookSecret) return res.status(401).json({ error: 'bad secret' });
+    const failed = req.query.failed === '1';
+    if (!failed && (!Buffer.isBuffer(req.body) || req.body.length < 10000)) return res.status(400).json({ error: 'no video' });
+    const result = await require('./services/reels').handleReelUpload({
+      reelId: String(req.query.reel_id || ''), video: failed ? null : req.body, meta: req.get('x-reel-meta'), runUrl: req.get('x-run-url'), failed,
+    });
+    res.json(result);
+  } catch (err) {
+    await logError(null, 'REEL_UPLOAD', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Public reel videos (UUID URLs) — Instagram downloads the MP4 from here; supports Range for previews.
+app.get('/reels/:id.mp4', async (req, res, next) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(404).end();
+    const r = await prisma.reel.findUnique({ where: { id: req.params.id }, select: { video: true } });
+    if (!r?.video?.length) return res.status(404).send('Reel not found');
+    const buf = Buffer.from(r.video);
+    const range = /bytes=(\d*)-(\d*)/.exec(req.get('range') || '');
+    res.set({ 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=3600' });
+    if (range) {
+      const start = range[1] ? Number(range[1]) : 0;
+      const end = range[2] ? Math.min(Number(range[2]), buf.length - 1) : buf.length - 1;
+      res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${buf.length}`, 'Content-Length': end - start + 1 });
+      return res.end(buf.subarray(start, end + 1));
+    }
+    res.set('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/', (req, res) => res.json({ service: 'Infinity Web & Apps — sales automation', status: 'ok' }));
@@ -82,6 +120,7 @@ app.use('/api/campaign', requireAdmin, campaignRoutes);
 app.use('/api/approvals', requireAdmin, approvalRoutes);
 app.use('/api/calendar', requireAdmin, calendarRoutes);
 app.use('/api/whatsapp', requireAdmin, whatsappLinkRoutes);
+app.use('/api/reels', requireAdmin, require('./routes/reels'));
 app.use('/api/contacts', requireAdmin, contactRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));

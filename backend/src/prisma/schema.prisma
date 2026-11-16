@@ -165,6 +165,7 @@ enum OwnerCallType {
   NOTICE    // one-off news for Harsha, e.g. "Claude finished building X"
   QUOTATION // approve sending a proposal to a client
   WEBSITE   // approve sending the live website link to a client
+  REEL      // approve today's Instagram reel before it's posted
 }
 
 enum OwnerCallStatus {
@@ -246,4 +247,37 @@ model RelayCall {
 
   @@index([to_phone, status])
   @@map("relay_calls")
+}
+
+// One Instagram reel per day: Claude codes it (Remotion) in GitHub Actions → sir approves → posted at 7:30 PM.
+model Reel {
+  id             String    @id @default(uuid()) @db.Uuid
+  day            String    @unique // YYYY-MM-DD (IST)
+  status         String    @default("generating") // generating | ready | approved | rejected | posting | posted | failed
+  topic          String?
+  caption        String?   @db.Text
+  video          Bytes?    // MP4, served publicly at /reels/:id.mp4 for Instagram to fetch (pruned after posting)
+  video_size     Int?
+  run_url        String?
+  instructions   String?   @db.Text // sir's changes for a redo
+  ig_container_id String?
+  ig_media_id    String?
+  ig_permalink   String?
+  error          String?   @db.Text
+  ready_at       DateTime? @db.Timestamptz(6)
+  approved_at    DateTime? @db.Timestamptz(6)
+  posted_at      DateTime? @db.Timestamptz(6)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@map("reels")
+}
+
+// Small key/value store for settings the server updates itself (e.g. refreshed Instagram token).
+model AppSetting {
+  key        String   @id
+  value      String   @db.Text
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("app_settings")
 }
