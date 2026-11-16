@@ -118,6 +118,7 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
         timezone: 'Asia/Kolkata',
       },
       app_config: {
+        app_type: 'agent', // Sarvam now requires this discriminator on campaigns
         app_id: appId,
         app_version: appVersion,
         attempts_per_second: 0.5,
