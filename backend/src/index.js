@@ -121,6 +121,13 @@ app.use('/api/approvals', requireAdmin, approvalRoutes);
 app.use('/api/calendar', requireAdmin, calendarRoutes);
 app.use('/api/whatsapp', requireAdmin, whatsappLinkRoutes);
 app.use('/api/reels', requireAdmin, require('./routes/reels'));
+// Weekly report preview / send now
+app.get('/api/reports/weekly', requireAdmin, async (req, res, next) => {
+  try { res.json(await require('./services/weeklyReport').buildWeeklyReport()); } catch (err) { next(err); }
+});
+app.post('/api/reports/weekly/send', requireAdmin, async (req, res, next) => {
+  try { const r = await require('./services/weeklyReport').sendWeeklyReport('dashboard'); res.json({ ok: true, spoken: r.spoken }); } catch (err) { next(err); }
+});
 app.use('/api/contacts', requireAdmin, contactRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));

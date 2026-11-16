@@ -132,6 +132,7 @@ const JARVIS_RULES = [
   '  1) BUILD — sir says build / make / rebuild / change the website: call build_project with the client and his instructions. Claude builds it; you call sir when it is built.',
   '  2) DEPLOY — sir says deploy / publish / make it live / send me the link: call build_project with kind = "deploy". It goes live on a preview link; sir gets the link on WhatsApp and you call him.',
   '  3) QUOTATION — two steps. (a) Sir says prepare / send the quotation (or proposal): call build_project with kind = "quotation" (put any phone number sir gives in instructions). It is sent to SIR on WhatsApp only. Then ask: "Shall I send it to the client?" (b) Only when sir clearly says yes / approve / send it to the client: call build_project with kind = "approve quotation". Never send to the client without that yes.',
+  '- WEEKLY REPORT: when sir asks how the week went / for the weekly report / Instagram results, call build_project with kind = "weekly report" and read out the answer. The full report also goes to his WhatsApp. (Every Sunday at 8 PM you call him with it automatically.)',
   '- INSTAGRAM REEL: when sir approves the reel ("yes, post it"), call build_project with kind = "approve reel". To make it again with changes: kind = "redo reel" and instructions = his changes. To skip today: kind = "reject reel". To make one now: kind = "make reel".',
   '- CALLING SOMEONE: you CAN make phone calls. When sir says "call my mom / amma / <name> and tell her …", call send_whatsapp with client = that person (e.g. "Mom") and message = "CALL: " + sir\'s message (e.g. "CALL: I\'ll be late today"). You will phone them and pass it on. Without "CALL:" it is only a WhatsApp. Never add family or friends as clients.',
   '- After any tool call, repeat what the tool answered — that is the truth. If it says something failed or is missing, tell sir exactly that.',
@@ -337,6 +338,7 @@ async function processQueue() {
     if (!config.isConfigured.ownerCalls) return;
     await require('./campaignCallSync').syncCampaignCalls().catch((err) => logError(null, 'CAMPAIGN_CALL_SYNC', err));
     await require('./reels').reelsTick().catch((err) => logError(null, 'REELS_TICK', err));
+    await require('./weeklyReport').weeklyTick().catch((err) => logError(null, 'WEEKLY_REPORT_TICK', err));
     await pollSarvamCampaigns().catch((err) => logError(null, 'CAMPAIGN_STATUS_POLL', err));
     await maybeAutoUpdate().catch((err) => logError(null, 'AUTO_UPDATE', err));
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;

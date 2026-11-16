@@ -448,6 +448,15 @@ async function jarvisBuild(req, res) {
   if (!client && !wanted) return res.json({ answer: 'Which business is it for, sir? Give me a name for the project.' });
   // build_project doubles as deploy / send-quotation / call-a-person, so no new tools are needed in the Sarvam editor.
   const intent = `${src.kind || ''} ${src.action || ''} ${src.instructions || ''}`.toLowerCase();
+  if (/weekly|week.?s report|this week|report/.test(intent)) {
+    try {
+      const r = await require('../services/weeklyReport').buildWeeklyReport();
+      try { if (config.ownerPhone && (await waLinked.hasSession())) await waLinked.sendText(config.ownerPhone, r.whatsapp); } catch { /* best effort */ }
+      return res.json({ answer: r.spoken });
+    } catch (err) {
+      return res.json({ answer: `I couldn't build the weekly report, sir: ${err.message}.` });
+    }
+  }
   if (/\breels?\b|instagram/.test(intent)) return reelFor(intent, src, res);
   if (/^\s*(call|phone call|relay)\b/.test(String(src.kind || '').toLowerCase())) {
     const spoken = String(src.instructions || '').replace(/[^\d+]/g, '');

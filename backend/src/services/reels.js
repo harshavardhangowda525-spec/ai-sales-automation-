@@ -481,5 +481,5 @@ async function reelsTick(now = new Date()) {
 
 module.exports = {
   requestReel, handleReelUpload, approveReel, rejectReel, publishReel, postDueReels, reelsTick, latestOpenReel,
-  todayIST, topicFor, reelVideoUrl, ensureReelsRepo, REEL_WORKFLOW, getSetting, postTimeToday, syncReelCalendar,
+  todayIST, topicFor, reelVideoUrl, ensureReelsRepo, REEL_WORKFLOW, getSetting, setSetting, postTimeToday, syncReelCalendar, ig, igUserId,
 };
