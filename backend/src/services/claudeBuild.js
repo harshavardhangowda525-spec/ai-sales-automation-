@@ -8,6 +8,10 @@ const { createClientRepo, putFile, ensureBuildSetup, dispatchBuild } = require('
 
 const KIND_LABEL = { website: 'website', app: 'web app', mobile: 'mobile app' };
 
+function planFor(client) {
+  return ['BASIC', 'PREMIUM', 'ADVANCED'].includes(client.plan_interest) ? client.plan_interest : 'PREMIUM';
+}
+
 function buildPrompt(client, { kind = 'website', instructions }) {
   const what = kind === 'mobile'
     ? `a mobile app for ${client.business_name} (React Native with Expo, Android and iOS, in a \`mobile/\` folder), based on the business details, requirements and plan scope in CLAUDE.md`
@@ -17,6 +21,7 @@ function buildPrompt(client, { kind = 'website', instructions }) {
     'Follow the "How to work" section: write or update PLAN.md first, then build, then complete the README and the done checklist.',
     kind === 'mobile' ? 'Include clear steps in the README to run it with Expo Go and to make Android/iOS builds with EAS.' : null,
     'If the project already exists, continue from where it is and improve it rather than starting over.',
+    kind !== 'mobile' ? `DESIGN BAR: the site must look premium on every plan (even Basic ₹4,999) — ${require('./websitePrompt').designLines(planFor(client)).join(' ')} If CLAUDE.md asks for less design, follow this instead.` : null,
     'IMPORTANT: create the real project files in this repository NOW with the Write tool — do not stop after planning, do not ask questions, and do not just describe what you would do. The run fails if no project files exist.',
     'It will be deployed to Vercel with zero configuration: use a standard setup (e.g. Vite + React, Next.js, or plain HTML/CSS/JS), keep it at the repository root, make sure `npm install && npm run build` succeeds if it has a package.json, and run the build once to check before you finish.',
     'Finish by listing the files you created.',

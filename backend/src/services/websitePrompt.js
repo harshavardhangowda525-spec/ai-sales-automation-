@@ -14,7 +14,7 @@ const PLAN_SCOPE = {
       'Google Maps embed of the business location on Contact',
       'Contact form (name, phone, message) — submissions via a simple form service or mailto',
     ],
-    stack: 'Static site: Vite + React + Tailwind CSS (or plain HTML + Tailwind), deployable to Vercel/Netlify/Render static',
+    stack: 'Static site: Vite + React + Tailwind CSS + Framer Motion, deployable to Vercel',
   },
   PREMIUM: {
     pages: 'Up to 8 pages: Home, About, Services (with detail sections), Gallery, Testimonials, FAQ, Blog/Offers, Contact',
@@ -25,7 +25,7 @@ const PLAN_SCOPE = {
       'Social media links/embeds (Instagram, Facebook, YouTube as relevant)',
       'Fast loading: optimised images, lazy loading, Lighthouse 90+ on mobile',
     ],
-    stack: 'Next.js (static export) + Tailwind CSS, deployable to Vercel',
+    stack: 'Next.js (static export) + Tailwind CSS + Framer Motion, deployable to Vercel',
   },
   ADVANCED: {
     pages: 'Custom page set agreed with the client (typically 8–12): Home, About, Services, Booking, Pricing, Gallery, Testimonials, FAQ, Contact, Admin',
@@ -37,9 +37,37 @@ const PLAN_SCOPE = {
       'WhatsApp Business API notifications for new bookings (stubbed behind an env var)',
       'Simple admin page protected by a password',
     ],
-    stack: 'Next.js (App Router) + Tailwind CSS + a Postgres database (Neon) via Prisma, deployable to Vercel/Render',
+    stack: 'Next.js (App Router) + Tailwind CSS + Framer Motion + a Postgres database (Neon) via Prisma, deployable to Vercel/Render',
   },
 };
+
+// Every plan must look premium — even Basic (₹4,999). Higher plans add more motion and polish.
+const DESIGN_LEVEL = {
+  BASIC: [
+    'Premium, agency-quality look — it must feel like a ₹50,000 website, not a template.',
+    'Motion graphics with Framer Motion: hero headline/CTA entrance, scroll-reveal on every section (fade + slide up, staggered cards), hover lift + glow on buttons and cards, smooth scrolling, animated counters for stats.',
+    'Modern textures: subtle film-grain/noise overlay, soft gradient or mesh-gradient backgrounds, glassmorphism (backdrop-blur) cards and a sticky glass header, layered soft shadows, rounded 2xl corners.',
+    'Premium typography: a distinctive Google Fonts display face for headings (e.g. Sora, Clash Display-style, Playfair for elegant brands) paired with Inter/Manrope for body; big confident hero type.',
+    'Refined details: lucide-react icons, generous whitespace on an 8px spacing scale, section dividers/waves, a services marquee or logo strip, a bold final CTA band.',
+  ],
+  PREMIUM: [
+    'Everything in the Basic design level, plus:',
+    'Parallax hero with an animated gradient / aurora background, image reveal masks, page-transition animations between routes.',
+    'Interactive service cards (tilt or flip on hover), an auto-playing testimonial carousel, animated FAQ accordions.',
+  ],
+  ADVANCED: [
+    'Everything in the Premium design level, plus:',
+    'Scroll-driven storytelling sections (sticky sections that animate as you scroll), a subtle 3D or particle hero element (CSS/Three.js, lightweight).',
+    'Animated, delightful booking flow with micro-interactions and a success animation.',
+  ],
+};
+
+function designLines(key) {
+  const lines = [...DESIGN_LEVEL.BASIC];
+  if (key === 'PREMIUM' || key === 'ADVANCED') lines.push(...DESIGN_LEVEL.PREMIUM.slice(1));
+  if (key === 'ADVANCED') lines.push(...DESIGN_LEVEL.ADVANCED.slice(1));
+  return lines;
+}
 
 function planKey(client) {
   return PLANS[client.plan_interest] ? client.plan_interest : 'PREMIUM';
@@ -90,9 +118,11 @@ ${scope.features.map((f) => `  - ${f}`).join('\n')}
 - Use placeholder images from https://images.unsplash.com relevant to the business; mark each with a TODO to replace with the client's photos.
 - Add the phone number as tap-to-call and a WhatsApp link: https://wa.me/${String(client.phone_number).replace(/\D/g, '')}
 
-## Design
-- Mobile-first (most visitors are on phones). Large tap targets, readable 16px+ body text.
-- Pick a colour palette that suits the business type; define it once as CSS variables / Tailwind theme.
+## Design — premium look with motion (most important)
+${designLines(key).map((l) => `- ${l}`).join('\n')}
+- Mobile-first (most visitors are on phones). Large tap targets, readable 16px+ body text; every animation must look great on a phone.
+- Pick a rich colour palette that suits the business type (with one bold accent); define it once as CSS variables / Tailwind theme.
+- Performance stays high: animate only transform/opacity, lazy-load images, respect \`prefers-reduced-motion\`.
 - Accessible: semantic HTML, alt text, sufficient contrast, keyboard navigable.
 
 ## Deliverables
@@ -105,6 +135,7 @@ ${scope.features.map((f) => `  - ${f}`).join('\n')}
 - [ ] WhatsApp button and tap-to-call work on mobile
 - [ ] Contact section with Google Maps embed
 ${key !== 'BASIC' ? '- [ ] SEO meta tags, sitemap.xml, robots.txt, LocalBusiness JSON-LD\n' : ''}${key === 'ADVANCED' ? '- [ ] Booking flow works end to end, Razorpay test payment succeeds, admin page lists bookings\n' : ''}- [ ] Lighthouse mobile score ≥ 90 for performance and accessibility
+- [ ] Looks premium: motion on hero + scroll reveals + hover states, textured/gradient backgrounds, polished typography
 - [ ] No placeholder text left except clearly marked image TODOs
 `;
 }
@@ -132,4 +163,4 @@ async function generateWebsitePrompt(clientOrId) {
   return updated;
 }
 
-module.exports = { generateWebsitePrompt, templatePrompt };
+module.exports = { designLines, generateWebsitePrompt, templatePrompt };
