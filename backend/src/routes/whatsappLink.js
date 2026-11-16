@@ -27,7 +27,9 @@ router.post('/test', async (req, res, next) => {
   try {
     const to = req.body?.to || config.ownerPhone;
     if (!to) return res.status(400).json({ error: 'No number to test with (set HARSHAVARDHAN_PHONE)' });
-    const id = await waLinked.sendText(to, '✅ Infinity dashboard test: your WhatsApp is linked and can send messages automatically.');
+    const text = String(req.body?.text || '').trim().slice(0, 2000)
+      || '✅ Infinity dashboard test: your WhatsApp is linked and can send messages automatically.';
+    const id = await waLinked.sendText(to, text);
     await logAction(null, 'WHATSAPP_TEST_SENT', `Test message sent to ${to}`);
     res.json({ ok: true, message_id: id });
   } catch (err) { res.status(400).json({ error: err.message }); }
