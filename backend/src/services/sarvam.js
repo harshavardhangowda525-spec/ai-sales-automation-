@@ -109,7 +109,8 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
     const created = await sarvamRequest('POST', `/scheduling/v1/orgs/${orgId}/workspaces/${workspaceId}/campaigns`, {
       name: campaign_name.slice(0, 100),
       description: `Infinity Web & Apps outreach (${campaign.id})`.slice(0, 150),
-      start_timestamp: new Date(now.getTime() + 60000).toISOString(),
+      // Sarvam requires the start to be at least 2 minutes ahead — use 3 to be safe.
+      start_timestamp: new Date(now.getTime() + 3 * 60000).toISOString(),
       end_timestamp: end.toISOString(),
       allowed_schedule: {
         allowed_start_time: '10:00',
@@ -146,7 +147,7 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
 
     let cohort = null;
     if (contacts.length) {
-      cohort = await sarvamRequest('POST',
+      const upload = (withVars) => sarvamRequest('POST',
         `/scheduling/v1/orgs/${orgId}/workspaces/${workspaceId}/campaigns/${sarvamCampaignId}/cohorts/stream`, {
           name: (cohort_id || `${campaign_name} cohort`).slice(0, 50),
           users: contacts.slice(0, 1000).map((c) => ({
@@ -154,9 +155,17 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
             user_identifier: c.business_name || undefined,
             // The sales agent only defines business_name — sending variables it doesn't have gets
             // the upload rejected (Jarvis now has his own agent, so no call_type is needed here).
-            app_variables: { business_name: c.business_name || '' },
+            ...(withVars ? { app_variables: { business_name: c.business_name || '' } } : {}),
           })),
         });
+      try {
+        cohort = await upload(true);
+      } catch (err) {
+        // A new agent version may not define business_name — upload the numbers without it.
+        if (!/422|variable/i.test(err.message)) throw err;
+        await logError(null, 'CAMPAIGN_COHORT_VARS', err);
+        cohort = await upload(false);
+      }
     }
 
     await logAction(null, 'CAMPAIGN_STARTED',
@@ -164,7 +173,12 @@ async function startCampaign({ campaign_name, agent_id, agent_version, cohort_id
     return { campaign: { ...campaign, sarvam_campaign_id: sarvamCampaignId }, sarvam: { campaign: created, cohort } };
   } catch (err) {
     await logError(null, 'CAMPAIGN_START', err);
-    throw err;
+    // Don't leave a "running" campaign on the dashboard for a start that never reached Sarvam.
+    const row = await prisma.campaign.findUnique({ where: { id: campaign.id } }).catch(() => null);
+    if (row && !row.sarvam_campaign_id) await prisma.campaign.delete({ where: { id: campaign.id } }).catch(() => {});
+    // Show the real reason on the dashboard instead of "internal server error".
+    const detail = String(err.message).match(/"details":"([^"]+)"/)?.[1];
+    throw Object.assign(new Error(detail ? `Sarvam refused the campaign: ${detail}` : err.message), { status: 502 });
   }
 }
 
