@@ -220,7 +220,9 @@ async function requestReel({ day = todayIST(), instructions = null, source = 'sc
   if (existing && ['posting', 'posted'].includes(existing.status)) {
     throw Object.assign(new Error(`Today's reel is already ${existing.status}`), { status: 409 });
   }
-  if (existing?.status === 'generating' && Date.now() - existing.updated_at.getTime() < 50 * 60000 && !instructions) {
+  // Already running on GitHub (has a run URL) → don't start a second one. A reel stuck without a run URL
+  // (the server restarted mid-setup) is started again.
+  if (existing?.status === 'generating' && existing.run_url && Date.now() - existing.updated_at.getTime() < 50 * 60000 && !instructions) {
     return existing; // already being made
   }
   const topic = existing?.topic && instructions ? existing.topic : topicFor(day);
@@ -426,6 +428,38 @@ async function postDueReels() {
   }
 }
 
+/** Put the 7:30 PM reel slot on sir's Google Calendar for today and the next 6 days (once per day). */
+let lastCalendarSync = 0;
+async function syncReelCalendar(now = new Date()) {
+  if (!config.isConfigured.google || now.getTime() - lastCalendarSync < 60 * 60000) return;
+  lastCalendarSync = now.getTime();
+  const { addCalendarEvent } = require('./googleCalendar');
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now.getTime() + i * 86400000);
+    const day = todayIST(d);
+    const key = `reel_event_${day}`;
+    if (await getSetting(key)) continue;
+    const p = istParts(d);
+    const start = istDate(p.year, p.month, p.day, config.reels.postHour, config.reels.postMinute);
+    if (start.getTime() < now.getTime()) { await setSetting(key, 'past'); continue; }
+    const topic = topicFor(day);
+    try {
+      const ev = await addCalendarEvent({
+        title: `📲 Instagram reel goes live — ${topic.split(/[—:]/)[0].trim()}`.slice(0, 120),
+        start,
+        minutes: 15,
+        description: `Daily Instagram reel for @infinitywebapps.\n\nTopic: ${topic}\n\n`
+          + `${config.reels.prepareHour}:00 — Claude makes the reel; you get it on WhatsApp and Jarvis calls for your approval.\n`
+          + `${config.reels.postHour}:${String(config.reels.postMinute).padStart(2, '0')} — it's posted on Instagram (only if you approved it).\n\nManage it on the Reels page of the dashboard.`,
+      });
+      await setSetting(key, ev.id || 'added');
+    } catch (err) {
+      await logError(null, 'REEL_CALENDAR', err);
+      break;
+    }
+  }
+}
+
 /** Called every minute by the worker. */
 let lastTick = 0;
 async function reelsTick(now = new Date()) {
@@ -435,13 +469,15 @@ async function reelsTick(now = new Date()) {
   if (p.hour >= config.reels.prepareHour && p.hour < 22) {
     const day = todayIST(now);
     const existing = await prisma.reel.findUnique({ where: { day } });
-    if (!existing) await requestReel({ day, source: 'daily 5 PM schedule' }).catch(() => {});
+    const stuck = existing?.status === 'generating' && !existing.run_url && Date.now() - existing.updated_at.getTime() > 3 * 60000;
+    if (!existing || stuck) await requestReel({ day, source: stuck ? 'restart after interrupted setup' : 'daily 5 PM schedule' }).catch(() => {});
   }
   await postDueReels().catch((err) => logError(null, 'REEL_POST', err));
+  await syncReelCalendar(now).catch((err) => logError(null, 'REEL_CALENDAR', err));
   await refreshTokenIfDue().catch((err) => logError(null, 'INSTAGRAM_TOKEN_REFRESH', err));
 }
 
 module.exports = {
   requestReel, handleReelUpload, approveReel, rejectReel, publishReel, postDueReels, reelsTick, latestOpenReel,
-  todayIST, topicFor, reelVideoUrl, ensureReelsRepo, REEL_WORKFLOW, getSetting, postTimeToday,
+  todayIST, topicFor, reelVideoUrl, ensureReelsRepo, REEL_WORKFLOW, getSetting, postTimeToday, syncReelCalendar,
 };
