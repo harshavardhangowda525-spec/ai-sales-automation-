@@ -139,6 +139,15 @@ const server = app.listen(config.port, () => {
   console.log('   Integrations:', config.isConfigured);
   startOwnerCallWorker();
   waLinked.resumeIfLinked().catch((err) => console.error('[whatsapp] resume failed:', err.message));
+  // Render's free plan sleeps after ~15 min without inbound traffic — and a sleeping server misses the
+  // 7:30 PM reel, Jarvis's calls and the WhatsApp link. Ping our own public URL every 10 minutes so it
+  // never goes idle (the request goes through Render's edge, so it counts as traffic).
+  if (/^https:\/\//.test(config.publicBaseUrl || '')) {
+    const keepAwake = setInterval(() => {
+      fetch(`${config.publicBaseUrl}/health`, { signal: AbortSignal.timeout(20000) }).catch(() => {});
+    }, 10 * 60000);
+    keepAwake.unref?.();
+  }
   if (!config.adminToken) console.warn('⚠️  ADMIN_TOKEN not set — dashboard API is open. Set it in production.');
 });
 
