@@ -9,6 +9,15 @@ const { istParts, istDate, formatMeetingTime } = require('../../lib/time');
 const CALL_START_HOUR = Number(process.env.VOICE_CALL_START_HOUR ?? 10); // IST, outbound only
 const CALL_END_HOUR = Number(process.env.VOICE_CALL_END_HOUR ?? 19);
 const MAX_ATTEMPTS_PER_WEEK = Number(process.env.VOICE_MAX_ATTEMPTS_PER_WEEK ?? 3);
+const DAILY_CALL_CAP = Number(process.env.VOICE_DAILY_CALL_CAP ?? 100);
+
+/** Cold calling is switched on by sir, who holds the telemarketing authorisation for it. */
+function coldCalling() {
+  return {
+    authorized: process.env.VOICE_COLD_CALLING_AUTHORIZED === 'true',
+    ref: (process.env.VOICE_TELEMARKETER_ID || '').trim() || null,
+  };
+}
 
 const CLIENT_FIELDS = {
   id: true, business_name: true, contact_name: true, phone_number: true, email: true, call_outcome: true,
@@ -52,18 +61,26 @@ async function getCallEligibility({ clientId = null, phone = null, purpose = 'fo
   const number = toE164(lead?.phone_number || phone);
   if (!number || number.replace(/\D/g, '').length < 12) reasons.push('No valid Indian mobile number');
   if (!lead) reasons.push('Not a CRM contact — only existing customers/leads can be called');
-  if (lead?.do_not_call) reasons.push('Customer opted out (do-not-call)');
-  if (lead && !lead.voice_consent) reasons.push('No recorded consent to receive AI calls');
-  if (purpose === 'promotional') reasons.push('Unsolicited promotional calls from a personal number are not allowed');
+  if (lead?.do_not_call || (number && await prisma.client.count({ where: { phone_number: number, do_not_call: true } }))) reasons.push('Customer opted out (do-not-call)');
+  const cold = purpose === 'cold' || purpose === 'promotional';
+  if (cold) {
+    const cc = coldCalling();
+    if (!cc.authorized) reasons.push('Cold calling is switched off (VOICE_COLD_CALLING_AUTHORIZED)');
+    else if (!cc.ref) reasons.push('Cold calling needs your telemarketing registration reference (VOICE_TELEMARKETER_ID)');
+  } else if (lead && !lead.voice_consent) reasons.push('No recorded consent to receive AI calls');
   if (!inCallingHours(now)) reasons.push(`Outside calling hours (${CALL_START_HOUR}:00–${CALL_END_HOUR}:00 IST, Mon–Sat)`);
   if (lead) {
     const weekAgo = new Date(now.getTime() - 7 * 86400000);
     // Only real dial attempts count (blocked / cancelled requests never reached the phone).
-    const recent = await prisma.voiceCall.count({ where: { client_id: lead.id, direction: 'OUTBOUND', mode: 'LIVE', started_at: { gte: weekAgo } } });
+    const recent = await prisma.voiceCall.count({ where: { OR: [{ client_id: lead.id }, ...(number ? [{ phone: number }] : [])], direction: 'OUTBOUND', mode: 'LIVE', started_at: { gte: weekAgo } } });
     if (recent >= MAX_ATTEMPTS_PER_WEEK) reasons.push(`Already called ${recent} times this week`);
     const open = await prisma.voiceCall.count({ where: { client_id: lead.id, mode: 'LIVE', ...(excludeCallId ? { id: { not: excludeCallId } } : {}), state: { in: ['QUEUED', 'GATEWAY_READY', 'DIALING', 'RINGING', 'CONNECTED', 'AI_ACTIVE', 'RETRY_PENDING'] } } });
     if (open) reasons.push('A call to this customer is already queued or in progress');
   }
+  const ip = istParts(now);
+  const dayStart = istDate(ip.year, ip.month, ip.day);
+  const today = await prisma.voiceCall.count({ where: { direction: 'OUTBOUND', mode: 'LIVE', started_at: { gte: dayStart } } });
+  if (today >= DAILY_CALL_CAP) reasons.push(`Daily call limit reached (${DAILY_CALL_CAP})`);
   return { eligible: reasons.length === 0, reasons, phone: number, lead };
 }
 
@@ -161,7 +178,7 @@ async function createApprovalRequest({ clientId, callId, kind, request, details 
 
 async function saveCallOutcome(call) {
   if (!call.client_id) return;
-  const map = { BOOKED: 'BOOKED', NOT_INTERESTED: 'REJECTED', OPT_OUT: 'REJECTED', CALLBACK: 'CALLBACK_LATER', NO_ANSWER: 'NO_ANSWER', BUSY: 'NO_ANSWER' };
+  const map = { BOOKED: 'BOOKED', NOT_INTERESTED: 'REJECTED', OPT_OUT: 'REJECTED', CALLBACK: 'CALLBACK_LATER', INTERESTED: 'CALLBACK_LATER', NO_ANSWER: 'NO_ANSWER', BUSY: 'NO_ANSWER' };
   const c = await prisma.client.findUnique({ where: { id: call.client_id } });
   const data = {};
   if (map[call.outcome] && c.call_outcome !== 'BOOKED') data.call_outcome = map[call.outcome];
@@ -170,7 +187,7 @@ async function saveCallOutcome(call) {
 }
 
 module.exports = {
-  getLead, getCustomer, getPreviousInteractions, getCallEligibility, updateLeadStatus, updateQualification,
+  getLead, getCustomer, getPreviousInteractions, getCallEligibility, coldCalling, updateLeadStatus, updateQualification,
   addConversationSummary, checkCalendarAvailability, bookAppointment, createFollowUp, createApprovalRequest,
   saveCallOutcome, inCallingHours,
 };

@@ -73,16 +73,43 @@ How transitions work:
 
 ## Safety gates (all must pass before a real outbound dial)
 
-1. The customer is a CRM client with **recorded consent** (`voice_consent`), is not `do_not_call`,
-   and has a valid Indian mobile number. The purpose is not promotional.
-2. Within calling hours (default 10:00–19:00 IST, Mon–Sat), fewer than 3 real dial attempts this
-   week, and no other call to them queued or in progress.
+1. The person is a CRM client, is not `do_not_call` (checked on every record for that number), and
+   has a valid Indian mobile number.
+   - Follow-ups need **recorded consent** (`voice_consent`).
+   - **Cold calls** (`purpose: 'cold'`) instead need sir's switch `VOICE_COLD_CALLING_AUTHORIZED=true`
+     and his telemarketing reference `VOICE_TELEMARKETER_ID`. That reference is stored on every
+     cold call (`voice_calls.authorization_ref`).
+2. Within calling hours (default 10:00–19:00 IST, Mon–Sat), fewer than 3 real dial attempts to that
+   number this week, under the daily cap (`VOICE_DAILY_CALL_CAP`, default 100), and no other call to
+   them queued or in progress.
 3. The agent has `can_call_out`, the server has `VOICE_LIVE_CALLING=true`, and emergency stop is off.
 4. The gateway is online and reports `call_initiation = VERIFIED` (only `selftest.js` sets this).
 5. **One call at a time** on the single SIM. Everything else waits in the queue, and eligibility is
    re-checked just before dialling.
 
 Inbound auto-answer needs `VOICE_AUTO_ANSWER=true`, `call_answering = VERIFIED` and an active Receptionist agent.
+
+## Cold-call campaigns (two engines)
+
+Who calls whom:
+- **Jarvis** calls sir on **Sarvam**: notices, approvals, summaries and reports.
+- **Sarvam campaigns** are unchanged.
+- **Infinity Voice campaigns** (`campaigns.engine = 'infinity_voice'`) cold-call from sir's own line.
+
+How an Infinity Voice campaign runs (`services/voice/voiceCampaigns.js`):
+1. `POST /api/campaign/start` with `engine: 'infinity_voice'` creates one `Client` row per lead.
+   Duplicates and do-not-call numbers are skipped.
+2. Every queue pass, the next uncalled lead gets a `requestLiveCall` with the Sales agent and
+   `purpose: 'cold'`. This happens only when the line is free, inside calling hours and under the daily cap.
+3. After each call is synced:
+   - the campaign stats are recomputed;
+   - a **BOOKED** lead gets the usual Meet + proposal, and the quotation goes to sir first.
+4. When every lead has had its call, Jarvis phones sir with the campaign summary (on Sarvam).
+
+During the call, the Sales agent:
+- says who is calling and why;
+- says it is an AI assistant if asked;
+- on "not interested / stop calling", records the opt-out (do-not-call) and ends politely.
 
 ## AI turn
 

@@ -343,6 +343,7 @@ async function processQueue() {
     await require('./reels').reelsTick().catch((err) => logError(null, 'REELS_TICK', err));
     await require('./weeklyReport').weeklyTick().catch((err) => logError(null, 'WEEKLY_REPORT_TICK', err));
     await require('./voice/orchestrator').tick().catch((err) => logError(null, 'VOICE_TICK', err));
+    await require('./voice/voiceCampaigns').tick().catch((err) => logError(null, 'VOICE_CAMPAIGN_TICK', err));
     await pollSarvamCampaigns().catch((err) => logError(null, 'CAMPAIGN_STATUS_POLL', err));
     await maybeAutoUpdate().catch((err) => logError(null, 'AUTO_UPDATE', err));
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;

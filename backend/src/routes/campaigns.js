@@ -18,12 +18,15 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// POST /api/campaign/start  body: { campaign_name, cohort_id?, agent_id?, agent_version?, contacts?: [{phone_number, business_name}] }
+// POST /api/campaign/start  body: { campaign_name, engine?: 'sarvam'|'infinity_voice', cohort_id?, agent_id?, agent_version?, contacts?: [{phone_number, business_name}] }
 router.post('/start', async (req, res, next) => {
   try {
     const { campaign_name, cohort_id, agent_id, agent_version, contacts, total_calls } = req.body || {};
     if (!campaign_name) return res.status(400).json({ error: 'campaign_name is required' });
     if (contacts && !Array.isArray(contacts)) return res.status(400).json({ error: 'contacts must be an array' });
+    if (req.body.engine === 'infinity_voice') {
+      return res.status(201).json(await require('../services/voice/voiceCampaigns').startVoiceCampaign({ campaign_name, contacts: contacts || [] }));
+    }
     const result = await startCampaign({ campaign_name, cohort_id, agent_id, agent_version, contacts: contacts || [] });
     if (!contacts?.length && Number(total_calls) > 0) {
       result.campaign = await prisma.campaign.update({

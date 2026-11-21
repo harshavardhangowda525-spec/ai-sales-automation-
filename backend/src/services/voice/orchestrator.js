@@ -41,9 +41,9 @@ const DEFAULT_AGENTS = [
   },
   {
     name: 'Jarvis — Sales', role: 'SALES', can_call_out: true,
-    greeting: 'Hello! This is Jarvis from Infinity Web and Apps, Bengaluru. Thank you for your interest — do you have two minutes?',
+    greeting: 'Hello! This is Jarvis calling from Infinity Web and Apps in Bengaluru. We build websites and automation for local businesses. Is this a good time for two minutes?',
     personality: 'Confident, upbeat, never pushy.',
-    objectives: 'For customers who asked to be contacted: explain our services and prices, qualify them, handle objections and book the free consultation.',
+    objectives: 'Cold calls and warm leads. Open by saying who you are and why you are calling, and ask if it is a good time. Find out what their business does and whether they have a website; explain our plans and prices, handle objections, and book a free 15-minute Google Meet with the founder. If asked, say you are an AI assistant. If they say not interested or stop calling, apologise, record_opt_out and end the call politely.',
     allowed_tools: ['check_availability', 'book_appointment', 'update_qualification', 'create_follow_up'],
   },
   {
@@ -55,8 +55,14 @@ const DEFAULT_AGENTS = [
   },
 ];
 
+const OLD_SALES_GREETING = 'Hello! This is Jarvis from Infinity Web and Apps, Bengaluru. Thank you for your interest — do you have two minutes?';
 async function ensureDefaultAgents() {
-  if (await prisma.voiceAgent.count()) return;
+  if (await prisma.voiceAgent.count()) {
+    // Upgrade the untouched default Sales agent to the cold-call script (edited agents are left alone).
+    const sales = DEFAULT_AGENTS.find((a) => a.role === 'SALES');
+    await prisma.voiceAgent.updateMany({ where: { role: 'SALES', greeting: OLD_SALES_GREETING }, data: { greeting: sales.greeting, objectives: sales.objectives } });
+    return;
+  }
   for (const a of DEFAULT_AGENTS) await prisma.voiceAgent.create({ data: { ...a, voice: null, language: 'en-IN' } });
 }
 
@@ -87,7 +93,11 @@ async function startSimulatedCall({ agentId, clientId = null, direction = 'INBOU
 async function requestLiveCall({ agentId, clientId, purpose = 'follow_up', source = 'dashboard' }) {
   const agent = await prisma.voiceAgent.findUnique({ where: { id: agentId } });
   if (!agent?.active) throw Object.assign(new Error('Agent not found or inactive'), { status: 404 });
-  let call = await prisma.voiceCall.create({ data: { agent_id: agent.id, client_id: clientId, direction: 'OUTBOUND', mode: 'LIVE' } });
+  const cold = purpose === 'cold';
+  let call = await prisma.voiceCall.create({ data: {
+    agent_id: agent.id, client_id: clientId, direction: 'OUTBOUND', mode: 'LIVE', purpose,
+    authorization_ref: cold ? crm.coldCalling().ref : null,
+  } });
   call = await transition(call, 'ELIGIBILITY_CHECK', { reason: `requested from ${source}` });
   const e = await crm.getCallEligibility({ clientId, purpose });
   const reasons = [...e.reasons];
@@ -129,7 +139,7 @@ async function tickOnce() {
     if (await activeLiveCall()) return; // single SIM: one call at a time
     const next = await prisma.voiceCall.findFirst({ where: { mode: 'LIVE', direction: 'OUTBOUND', state: 'QUEUED' }, orderBy: { created_at: 'asc' } });
     if (!next) return;
-    const e = await crm.getCallEligibility({ clientId: next.client_id, excludeCallId: next.id });
+    const e = await crm.getCallEligibility({ clientId: next.client_id, purpose: next.purpose, excludeCallId: next.id });
     if (!e.eligible) {
       await transition(next, 'CANCELLED', { reason: `no longer eligible: ${e.reasons.join('; ')}`, data: { error: e.reasons.join('; ') } });
       return;
@@ -266,6 +276,7 @@ async function finalize(callId) {
     await crm.addConversationSummary(call.client_id, `${call.direction} AI call — ${call.outcome || call.state}. ${call.summary || ''}`, call.id);
   }
   if (call.state === 'CANCELLED' || ENDED.has(call.state)) call = await transition(call, 'CRM_SYNCED');
+  if (call.state === 'CRM_SYNCED') await require('./voiceCampaigns').afterCall(call).catch((err) => logError(call.client_id, 'VOICE_CAMPAIGN_AFTER_CALL', err));
   return call;
 }
 

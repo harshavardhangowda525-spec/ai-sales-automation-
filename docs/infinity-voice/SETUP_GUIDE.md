@@ -88,6 +88,9 @@ On Render (backend service → Environment), set:
 | `VOICE_CLAUDE_MODEL` | optional, default `claude-opus-5-5` |
 | `VOICE_LIVE_CALLING` | leave unset until the self-test passes |
 | `VOICE_AUTO_ANSWER` | leave unset until `call_answering` is VERIFIED |
+| `VOICE_COLD_CALLING_AUTHORIZED` | `true` to allow cold-call campaigns on your line |
+| `VOICE_TELEMARKETER_ID` | your telemarketing registration / authorisation reference (stored on every cold call) |
+| `VOICE_DAILY_CALL_CAP` | optional, default `100` real outbound calls per day |
 
 ## 6. Self-test (real calls, only when you run them)
 
@@ -149,8 +152,12 @@ systemctl --user enable --now infinity-voice.service
 
 1. Use the **Test console** (simulated, free with the mock; real Claude replies once the API key is set).
 2. Inbound: set `VOICE_AUTO_ANSWER=true` and call the POCO C55 yourself.
-3. Outbound: mark consenting customers (`voice_consent`) with `PATCH /api/voice/consent/:clientId`,
+3. Outbound follow-ups: mark consenting customers (`voice_consent`) with `PATCH /api/voice/consent/:clientId`,
    set `VOICE_LIVE_CALLING=true`, then queue a call from the dashboard API.
+4. Cold calls:
+   - set `VOICE_COLD_CALLING_AUTHORIZED=true` and `VOICE_TELEMARKETER_ID`;
+   - go to **Campaigns → Start new campaign → Infinity Voice** and paste the leads.
+   They're dialled one at a time.
 
 **Emergency stop** is on the Overview page. It hangs up live calls, cancels the queue and blocks
 pending commands.

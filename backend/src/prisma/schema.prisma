@@ -54,6 +54,7 @@ model Campaign {
   cohort_id          String?
   agent_id           String?
   summary_call_sent  Boolean        @default(false)
+  engine             String         @default("sarvam") // sarvam | infinity_voice (sir's own phone line)
   contacts           Json?          // [{ phone, business_name }] uploaded with the campaign
   created_at         DateTime       @default(now()) @db.Timestamptz(6)
   completed_at       DateTime?      @db.Timestamptz(6)
@@ -318,6 +319,8 @@ model VoiceCall {
   agent_id            String    @db.Uuid
   client_id           String?   @db.Uuid
   direction           String    // INBOUND | OUTBOUND
+  purpose             String    @default("follow_up") // follow_up | cold | support
+  authorization_ref   String?   // telemarketing authorisation in force when a cold call was placed
   mode                String    // SIMULATED (test console) | LIVE (real phone line)
   phone               String?
   state               String    @default("CREATED")

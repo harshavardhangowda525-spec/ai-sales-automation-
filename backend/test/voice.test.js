@@ -36,6 +36,7 @@ before(async () => {
   await prisma.voiceAgent.deleteMany({});
   await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'voice_' } } });
   await prisma.client.deleteMany({ where: { business_name: { startsWith: 'VoiceTest' } } });
+  await prisma.campaign.deleteMany({ where: { name: { startsWith: 'VoiceTest' } } });
   await orch.ensureDefaultAgents();
   agents = Object.fromEntries((await prisma.voiceAgent.findMany()).map((a) => [a.role, a]));
   client = await prisma.client.create({ data: { business_name: 'VoiceTest Bakery', phone_number: '+919812345678', call_outcome: 'MANUAL', voice_consent: true } });
@@ -186,4 +187,91 @@ test('emergency stop hangs up and cancels the queue', async () => {
   assert.ok(hb.commands.every((c) => c.command === 'HANGUP'));
   assert.equal(await prisma.voiceCall.count({ where: { mode: 'LIVE', state: { in: ['QUEUED', 'RETRY_PENDING'] } } }), 0);
   await orch.emergencyStop(false);
+});
+
+// ── Cold-call campaigns on Infinity Voice ──
+const vc = require('../src/services/voice/voiceCampaigns');
+const pipeline = require('../src/services/pipeline');
+const booked = [];
+pipeline.runBookedAutomation = async (c) => { booked.push(c.id); return {}; };
+
+test('cold calls need the authorisation switch and reference; consent is not required', async () => {
+  await prisma.voiceCall.updateMany({ where: { mode: 'LIVE', state: { notIn: ['CRM_SYNCED', 'CANCELLED', 'BLOCKED'] } }, data: { state: 'CANCELLED' } });
+  process.env.VOICE_LIVE_CALLING = 'true';
+  const lead = await prisma.client.create({ data: { business_name: 'VoiceTest Cold Gym', phone_number: '+919800000001', call_outcome: 'MANUAL' } });
+  delete process.env.VOICE_COLD_CALLING_AUTHORIZED;
+  let e = await crm.getCallEligibility({ clientId: lead.id, purpose: 'cold' });
+  assert.ok(e.reasons.some((x) => /switched off/.test(x)));
+  process.env.VOICE_COLD_CALLING_AUTHORIZED = 'true';
+  delete process.env.VOICE_TELEMARKETER_ID;
+  e = await crm.getCallEligibility({ clientId: lead.id, purpose: 'cold' });
+  assert.ok(e.reasons.some((x) => /registration reference/.test(x)));
+  process.env.VOICE_TELEMARKETER_ID = 'TEST-REF-1';
+  e = await crm.getCallEligibility({ clientId: lead.id, purpose: 'cold' });
+  assert.equal(e.eligible, true, e.reasons.join('; '));
+  // A follow-up to the same person still needs consent.
+  e = await crm.getCallEligibility({ clientId: lead.id });
+  assert.ok(e.reasons.some((x) => /consent/.test(x)));
+  // Do-not-call always wins.
+  await prisma.client.update({ where: { id: lead.id }, data: { do_not_call: true } });
+  e = await crm.getCallEligibility({ clientId: lead.id, purpose: 'cold' });
+  assert.ok(e.reasons.some((x) => /opted out/.test(x)));
+});
+
+test('daily call cap blocks further cold calls', async () => {
+  const lead = await prisma.client.create({ data: { business_name: 'VoiceTest Cap', phone_number: '+919800000009', call_outcome: 'MANUAL' } });
+  process.env.VOICE_DAILY_CALL_CAP = '0';
+  delete require.cache[require.resolve('../src/services/voice/crmAdapter')];
+  const fresh = require('../src/services/voice/crmAdapter');
+  const e = await fresh.getCallEligibility({ clientId: lead.id, purpose: 'cold' });
+  assert.ok(e.reasons.some((x) => /Daily call limit/.test(x)));
+  delete process.env.VOICE_DAILY_CALL_CAP;
+});
+
+test('voice campaign: skips do-not-call, dials one lead at a time, books, then summary call', async () => {
+  await prisma.voiceCall.updateMany({ where: { mode: 'LIVE', state: { notIn: ['CRM_SYNCED', 'CANCELLED', 'BLOCKED'] } }, data: { state: 'CANCELLED' } });
+  const { campaign, added, skipped } = await vc.startVoiceCampaign({
+    campaign_name: 'VoiceTest campaign',
+    contacts: [
+      { phone_number: '9800000002', business_name: 'VoiceTest Salon' },
+      { phone_number: '9800000003', business_name: 'VoiceTest Clinic' },
+      { phone_number: '9800000003', business_name: 'dup' },
+      { phone_number: '9800000001', business_name: 'VoiceTest Cold Gym' }, // on do-not-call
+      { phone_number: '12', business_name: 'bad' },
+    ],
+  });
+  assert.equal(added, 2);
+  assert.equal(skipped.length, 1);
+  assert.equal(campaign.engine, 'infinity_voice');
+
+  const runCall = async (outcome) => {
+    await vc.tick();
+    await orch.tick();
+    const q = await prisma.voiceCall.findMany({ where: { purpose: 'cold', state: { in: ['QUEUED', 'DIALING'] } } });
+    assert.equal(q.length, 1, 'exactly one cold call queued');
+    assert.equal(q[0].authorization_ref, 'TEST-REF-1');
+    await vc.tick(); // line busy → no second call
+    assert.equal(await prisma.voiceCall.count({ where: { purpose: 'cold', state: { in: ['QUEUED', 'DIALING'] } } }), 1);
+    const hb = await orch.gatewayHeartbeat({ capabilities: VERIFIED, health: { call_active: false } });
+    assert.ok(hb.commands.some((c) => c.command === 'DIAL' && c.call_id === q[0].id));
+    await orch.gatewayEvent({ type: 'active', call_id: q[0].id });
+    if (outcome) await prisma.voiceCall.update({ where: { id: q[0].id }, data: { outcome } });
+    await orch.gatewayEvent({ type: 'disconnected', call_id: q[0].id, reason: 'remote hangup' });
+    return prisma.voiceCall.findUnique({ where: { id: q[0].id } });
+  };
+
+  const first = await runCall('BOOKED');
+  assert.equal(first.state, 'CRM_SYNCED');
+  assert.deepEqual(booked, [first.client_id]);
+  const second = await runCall('NOT_INTERESTED');
+  assert.equal(second.state, 'CRM_SYNCED');
+
+  const before = approvals.length;
+  await vc.tick();
+  const done = await prisma.campaign.findUnique({ where: { id: campaign.id } });
+  assert.equal(done.status, 'COMPLETED');
+  assert.equal(done.booked, 1);
+  assert.equal(done.rejected, 1);
+  assert.equal(approvals.length, before + 1);
+  assert.equal(approvals[approvals.length - 1].type, 'SUMMARY');
 });

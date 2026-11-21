@@ -15,16 +15,26 @@ function parseContacts(text) {
 }
 
 function NewCampaign({ onClose, onCreated }) {
-  const [form, setForm] = useState({ campaign_name: '', agent_id: '', cohort_id: '', total_calls: '', contacts: '' });
+  const [form, setForm] = useState({ engine: 'sarvam', campaign_name: '', agent_id: '', cohort_id: '', total_calls: '', contacts: '' });
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const contacts = parseContacts(form.contacts);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
+  const voice = form.engine === 'infinity_voice';
+
   async function submit(e) {
     e.preventDefault();
+    if (voice && !contacts.length) { toast('Add the leads to call', 'error'); return; }
     setBusy(true);
     try {
+      if (voice) {
+        const r = await api('/api/campaign/start', { method: 'POST', body: { engine: 'infinity_voice', campaign_name: form.campaign_name, contacts } });
+        toast(`Cold-call campaign queued on your line: ${r.added} leads${r.skipped?.length ? `, ${r.skipped.length} skipped (do-not-call)` : ''}`, 'success');
+        onCreated();
+        onClose();
+        return;
+      }
       const r = await api('/api/campaign/start', {
         method: 'POST',
         body: {
@@ -53,7 +63,19 @@ function NewCampaign({ onClose, onCreated }) {
           <label className="label" htmlFor="cn">Campaign name</label>
           <input id="cn" required className="input mt-1.5" placeholder="Jayanagar restaurants – Nov" value={form.campaign_name} onChange={set('campaign_name')} />
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <fieldset>
+          <legend className="label">Who makes the calls</legend>
+          <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {[['sarvam', 'Sarvam AI', 'Sarvam number and agent'], ['infinity_voice', 'Infinity Voice', 'Cold calls from your own phone line']].map(([v, t, d]) => (
+              <label key={v} className={`cursor-pointer rounded-lg border p-3 text-sm ${form.engine === v ? 'border-primary bg-primary/10' : 'border-line'}`}>
+                <input type="radio" name="engine" value={v} checked={form.engine === v} onChange={set('engine')} className="sr-only" />
+                <span className="block font-semibold text-ink">{t}</span>
+                <span className="block text-xs text-gray-500">{d}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {!voice && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="label" htmlFor="ag">Sarvam agent ID</label>
             <input id="ag" className="input mt-1.5" placeholder="default from server" value={form.agent_id} onChange={set('agent_id')} />
@@ -61,14 +83,14 @@ function NewCampaign({ onClose, onCreated }) {
           <div>
             <label className="label" htmlFor="co">Cohort name / ID</label>
             <input id="co" className="input mt-1.5" placeholder="optional" value={form.cohort_id} onChange={set('cohort_id')} />
-          </div>
-        </div>
+          </div>}
+        </div>}
         <div>
           <label className="label" htmlFor="ct">Leads — one per line: phone, business name</label>
           <textarea id="ct" rows={6} className="input mt-1.5 font-mono text-xs" placeholder={'9845012345, Sri Lakshmi Sweets\n9900112233, GreenLeaf Dental Clinic'} value={form.contacts} onChange={set('contacts')} />
-          <p className="mt-1 text-xs text-gray-500">{contacts.length} valid lead{contacts.length === 1 ? '' : 's'} — these are uploaded to Sarvam as the campaign cohort.</p>
+          <p className="mt-1 text-xs text-gray-500">{contacts.length} valid lead{contacts.length === 1 ? '' : 's'} — {voice ? 'called one at a time by your Sales agent, within calling hours. Do-not-call numbers are skipped.' : 'these are uploaded to Sarvam as the campaign cohort.'}</p>
         </div>
-        {!contacts.length && (
+        {!contacts.length && !voice && (
           <div>
             <label className="label" htmlFor="tc">Expected number of calls (if leads are uploaded in Sarvam)</label>
             <input id="tc" type="number" min="0" className="input mt-1.5" placeholder="e.g. 50" value={form.total_calls} onChange={set('total_calls')} />
@@ -109,7 +131,7 @@ export default function Campaigns() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl">Campaigns</h1>
-          <p className="text-sm">Every Sarvam AI calling campaign and its results.</p>
+          <p className="text-sm">Every calling campaign (Sarvam AI or Infinity Voice) and its results.</p>
         </div>
         <button className="btn-primary" onClick={() => setOpen(true)}><Icon name="play" className="h-3.5 w-3.5" /> New campaign</button>
       </div>
@@ -128,7 +150,7 @@ export default function Campaigns() {
             <div key={c.id} className="card p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-semibold text-ink">{c.name}</p>
+                  <p className="truncate font-semibold text-ink">{c.name}{c.engine === 'infinity_voice' && <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">Infinity Voice</span>}</p>
                   <p className="text-xs text-gray-500">Started {fmtDateTime(c.created_at)}{c.completed_at ? ` · finished ${fmtDateTime(c.completed_at)}` : ''}</p>
                 </div>
                 <Badge tone={c.status === 'RUNNING' ? 'blue' : 'green'}>{c.status === 'RUNNING' ? 'Running' : 'Completed'}</Badge>
