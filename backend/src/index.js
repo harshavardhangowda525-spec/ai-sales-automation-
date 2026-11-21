@@ -128,6 +128,9 @@ app.use('/voice-gateway', require('./routes/voice').gatewayRouter);
 app.get('/api/reports/weekly', requireAdmin, async (req, res, next) => {
   try { res.json(await require('./services/weeklyReport').buildWeeklyReport()); } catch (err) { next(err); }
 });
+app.post('/api/reports/instagram/call', requireAdmin, async (req, res, next) => {
+  try { res.json(await require('./services/weeklyReport').sendInstagramBriefing()); } catch (err) { next(err); }
+});
 app.post('/api/reports/weekly/send', requireAdmin, async (req, res, next) => {
   try { const r = await require('./services/weeklyReport').sendWeeklyReport('dashboard'); res.json({ ok: true, spoken: r.spoken }); } catch (err) { next(err); }
 });

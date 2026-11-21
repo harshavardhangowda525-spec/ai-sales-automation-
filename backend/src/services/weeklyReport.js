@@ -208,6 +208,41 @@ async function sendWeeklyReport(source = 'weekly schedule') {
   return r;
 }
 
+/**
+ * Short Instagram briefing for a Jarvis call: followers, today's reel (if one just went live) and how
+ * the recent posts are doing. Used after every reel is posted, and on demand.
+ */
+async function buildInstagramBriefing({ justPosted = null, now = new Date() } = {}) {
+  const ig = await instagramWeek(new Date(now.getTime() - 7 * 86400000));
+  if (!ig.connected) return { spoken: `Sir, I couldn't read Instagram right now${ig.error ? `: ${ig.error.slice(0, 120)}` : ''}.`, instagram: ig };
+  const say = [justPosted ? `Sir, today's reel is now live on Instagram${justPosted.topic ? `, the one about ${justPosted.topic}` : ''}.` : "Sir, here's your Instagram update."];
+  const grew = ig.followersBefore !== null ? ig.followers - ig.followersBefore : null;
+  say.push(`You have ${ig.followers} followers${grew === null ? '' : grew > 0 ? `, up ${grew} in the last week` : grew < 0 ? `, down ${-grew} in the last week` : ', the same as last week'}.`);
+  const older = justPosted ? ig.posts.filter((p) => p.id !== justPosted.ig_media_id) : ig.posts;
+  const sorted = [...older].sort((a, b) => Date.parse(b.when) - Date.parse(a.when));
+  if (sorted.length) {
+    const last = sorted[0];
+    say.push(`Your ${justPosted ? 'previous' : 'latest'} post, "${last.title.slice(0, 60)}", has ${plural(n(last.views), 'view')}, ${plural(last.likes, 'like')} and ${plural(last.comments, 'comment')}${n(last.shares) ? `, and was shared ${plural(n(last.shares), 'time')}` : ''}.`);
+    const views = older.reduce((a, p) => a + n(p.views), 0);
+    const likes = older.reduce((a, p) => a + p.likes, 0);
+    say.push(`Across ${plural(older.length, 'post')} this week that's ${plural(views, 'view')} and ${plural(likes, 'like')}.`);
+    const best = [...older].sort((a, b) => (n(b.views) + b.likes * 20) - (n(a.views) + a.likes * 20))[0];
+    if (best && older.length > 1 && best.id !== last.id) say.push(`The best performer is "${best.title.slice(0, 60)}" with ${plural(n(best.views), 'view')}.`);
+    if (ig.avgLikesBefore !== null) say.push(`That's ${likes / older.length >= ig.avgLikesBefore ? 'above' : 'below'} your usual ${ig.avgLikesBefore} likes per post.`);
+  } else {
+    say.push('No other posts went out this week.');
+  }
+  if (justPosted) say.push("I'll keep an eye on how today's reel does.");
+  return { spoken: say.join(' '), instagram: ig };
+}
+
+async function sendInstagramBriefing(opts = {}) {
+  const r = await buildInstagramBriefing(opts);
+  const call = await require('./ownerCalls').requestOwnerCall('NOTICE', { data: { notice: r.spoken } });
+  await logAction(null, 'INSTAGRAM_BRIEFING', r.spoken.slice(0, 1500));
+  return { ...r, ownerCallId: call.id };
+}
+
 let lastTick = 0;
 async function weeklyTick(now = new Date()) {
   if (now.getTime() - lastTick < 5 * 60000) return;
@@ -221,4 +256,4 @@ async function weeklyTick(now = new Date()) {
   await sendWeeklyReport().catch((err) => logError(null, 'WEEKLY_REPORT', err));
 }
 
-module.exports = { buildWeeklyReport, sendWeeklyReport, weeklyTick, snapshotFollowers };
+module.exports = { buildWeeklyReport, sendWeeklyReport, weeklyTick, snapshotFollowers, buildInstagramBriefing, sendInstagramBriefing };

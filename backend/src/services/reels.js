@@ -408,6 +408,9 @@ async function publishReel(reel) {
     await prisma.reel.update({ where: { id: reel.id }, data: { status: 'posted', ig_media_id: pub.id, ig_permalink: permalink, posted_at: new Date() } });
     await logAction(null, 'REEL_POSTED', `${reel.day} reel posted on Instagram${permalink ? `: ${permalink}` : ''}`);
     await notifyOwner(`✅ Sir, today's reel is live on Instagram${permalink ? `:\n${permalink}` : '.'}`);
+    // Jarvis calls with the Instagram briefing right after the post goes live.
+    require('./weeklyReport').sendInstagramBriefing({ justPosted: { topic: reel.topic, ig_media_id: pub.id } })
+      .catch((err) => logError(null, 'INSTAGRAM_BRIEFING', err));
   } catch (err) {
     await prisma.reel.update({ where: { id: reel.id }, data: { status: 'failed', error: err.message } });
     await logError(null, 'REEL_POST', err);
