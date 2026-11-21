@@ -4,7 +4,7 @@
 const config = require('../lib/config');
 const prisma = require('../lib/prisma');
 const { logAction, logError } = require('../lib/logger');
-const { istParts } = require('../lib/time');
+const { istParts, istDate } = require('../lib/time');
 
 const REPORT_DAY = Number(process.env.WEEKLY_REPORT_WEEKDAY ?? 0); // 0 = Sunday
 const REPORT_HOUR = Number(process.env.WEEKLY_REPORT_HOUR ?? 20);  // 8 PM IST
@@ -73,7 +73,7 @@ async function instagramWeek(since) {
 
 async function salesWeek(since) {
   const range = { gte: since };
-  const [newCampaigns, campaignClients, manualClients, meetings, quotationsSent, builds, deploys, relays] = await Promise.all([
+  const [newCampaigns, campaignClients, manualClients, meetings, quotationsSent, builds, deploys, relays, quotationsPrepared, quotationsPending] = await Promise.all([
     prisma.campaign.count({ where: { created_at: range } }),
     prisma.client.findMany({ where: { created_at: range, campaign_id: { not: null } }, select: { call_outcome: true, business_name: true, contact_name: true } }),
     prisma.client.count({ where: { created_at: range, call_outcome: 'MANUAL' } }),
@@ -82,6 +82,8 @@ async function salesWeek(since) {
     prisma.callLog.count({ where: { action: 'CLAUDE_BUILD_DONE', timestamp: range } }),
     prisma.callLog.findMany({ where: { action: 'DEPLOY_DONE', timestamp: range }, select: { details: true } }),
     prisma.relayCall.count({ where: { created_at: range } }),
+    prisma.ownerCall.count({ where: { type: 'QUOTATION', created_at: range } }),
+    prisma.ownerCall.count({ where: { type: 'QUOTATION', status: { in: ['QUEUED', 'CALLING', 'NEEDS_MANUAL'] } } }),
   ]);
   const count = (o) => campaignClients.filter((c) => c.call_outcome === o).length;
   const booked = campaignClients.filter((c) => c.call_outcome === 'BOOKED');
@@ -96,15 +98,43 @@ async function salesWeek(since) {
     manualClients,
     meetings: meetings.length,
     quotationsSent,
+    quotationsPrepared,
+    quotationsPending,
     builds,
     deploys: deploys.length,
     relays,
   };
 }
 
+const timeIST = (d) => new Date(d).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true });
+
+/** What sir has on the next day: Google Calendar entries + client Meets booked in the CRM. */
+async function tomorrowAgenda(now = new Date()) {
+  const p = istParts(new Date(now.getTime() + 86400000));
+  const from = istDate(p.year, p.month, p.day);
+  const to = new Date(from.getTime() + 86400000);
+  const items = [];
+  let calendarError = null;
+  try {
+    for (const e of await require('./googleCalendar').listGoogleEvents(from, to)) {
+      items.push({ at: e.all_day ? null : new Date(e.start), title: e.title, meet: e.meet_link });
+    }
+  } catch (err) { calendarError = err.message; }
+  const meets = await prisma.client.findMany({ where: { meeting_time: { gte: from, lt: to } }, select: { business_name: true, contact_name: true, meeting_time: true, meeting_link: true } });
+  for (const m of meets) {
+    const name = m.contact_name || m.business_name;
+    // Skip Meets already on the calendar (same time, name in the title).
+    if (items.some((i) => i.at && Math.abs(i.at - m.meeting_time) < 60000 && i.title.toLowerCase().includes(String(m.business_name).toLowerCase().slice(0, 8)))) continue;
+    items.push({ at: m.meeting_time, title: `Meet with ${name}`, meet: m.meeting_link });
+  }
+  items.sort((a, b) => (a.at ? a.at.getTime() : 0) - (b.at ? b.at.getTime() : 0));
+  const dayName = from.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long' });
+  return { dayName, items, calendarError };
+}
+
 async function buildWeeklyReport(now = new Date()) {
   const since = new Date(now.getTime() - 7 * 86400000);
-  const [s, ig] = await Promise.all([salesWeek(since), instagramWeek(since)]);
+  const [s, ig, agenda] = await Promise.all([salesWeek(since), instagramWeek(since), tomorrowAgenda(now)]);
   const postedReels = await prisma.reel.count({ where: { status: 'posted', posted_at: { gte: since } } });
 
   // ── Spoken (Jarvis, ~1 minute) ──
@@ -112,7 +142,8 @@ async function buildWeeklyReport(now = new Date()) {
   say.push(s.calls ? `This week Jarvis made ${plural(s.calls, 'sales call')}: ${s.booked} booked, ${s.callbacks} want a callback, ${s.rejected} said no and ${s.noAnswer} didn't pick up.` : 'No sales campaigns ran this week.');
   if (s.bookedNames.length) say.push(`Bookings: ${s.bookedNames.slice(0, 4).join(', ')}.`);
   if (s.meetings) say.push(`${plural(s.meetings, 'Google Meet')} scheduled.`);
-  if (s.quotationsSent) say.push(`${plural(s.quotationsSent, 'quotation')} went to clients.`);
+  if (s.quotationsPrepared || s.quotationsSent) say.push(`${plural(s.quotationsPrepared, 'quotation')} ${s.quotationsPrepared === 1 ? 'was' : 'were'} prepared and ${s.quotationsSent} went to clients.`);
+  if (s.quotationsPending) say.push(`${plural(s.quotationsPending, 'quotation')} still ${s.quotationsPending === 1 ? 'waits' : 'wait'} for your approval.`);
   if (s.builds || s.deploys) say.push(`Claude finished ${plural(s.builds, 'build')} and ${plural(s.deploys, 'website')} went live.`);
   if (ig.connected) {
     const grew = ig.followersBefore !== null ? ig.followers - ig.followersBefore : null;
@@ -129,6 +160,12 @@ async function buildWeeklyReport(now = new Date()) {
       say.push('No posts went out on Instagram this week.');
     }
   }
+  if (agenda.items.length) {
+    const spoken = agenda.items.slice(0, 5).map((i) => `${i.at ? `at ${timeIST(i.at)}` : 'all day'}, ${i.title}`);
+    say.push(`For ${agenda.dayName}, you have ${plural(agenda.items.length, 'thing')} lined up: ${spoken.join('; ')}${agenda.items.length > 5 ? ', and more on WhatsApp' : ''}.`);
+  } else if (!agenda.calendarError) {
+    say.push(`Your calendar for ${agenda.dayName} is clear.`);
+  }
   say.push("I've sent the full report to your WhatsApp. Anything you want me to change for next week?");
 
   // ── WhatsApp (full detail) ──
@@ -136,7 +173,7 @@ async function buildWeeklyReport(now = new Date()) {
   lines.push(`• Calls made: ${s.calls}${s.newCampaigns ? ` (${plural(s.newCampaigns, 'campaign')})` : ''}`);
   lines.push(`• ✅ Booked: ${s.booked}${s.bookedNames.length ? ` — ${s.bookedNames.join(', ')}` : ''}`);
   lines.push(`• 🔁 Callback: ${s.callbacks}   ❌ No: ${s.rejected}   📵 No answer: ${s.noAnswer}`);
-  lines.push(`• 📅 Meets scheduled: ${s.meetings}   📄 Quotations sent: ${s.quotationsSent}`);
+  lines.push(`• 📅 Meets scheduled: ${s.meetings}   📄 Quotations prepared: ${s.quotationsPrepared}, sent: ${s.quotationsSent}, awaiting your approval: ${s.quotationsPending}`);
   lines.push(`• 🛠️ Builds: ${s.builds}   🌐 Sites live: ${s.deploys}   ➕ Clients added by you: ${s.manualClients}`);
   lines.push('', '*Instagram*');
   if (!ig.connected) {
@@ -150,7 +187,11 @@ async function buildWeeklyReport(now = new Date()) {
       lines.push(`${p.hit ? '🎯' : '▫️'} ${p.when.slice(5, 10)} — 👁 ${n(p.views)}  👍 ${p.likes}  💬 ${p.comments}  🔁 ${n(p.shares)}  🔖 ${n(p.saved)}  · ${p.title}`);
     }
   }
-  return { spoken: say.join(' '), whatsapp: lines.join('\n'), sales: s, instagram: ig };
+  lines.push('', `*${agenda.dayName}*`);
+  if (agenda.calendarError) lines.push(`• Calendar not readable (${agenda.calendarError.slice(0, 100)})`);
+  else if (!agenda.items.length) lines.push('• Nothing scheduled');
+  for (const i of agenda.items) lines.push(`• ${i.at ? timeIST(i.at) : 'All day'} — ${i.title}${i.meet ? ` (${i.meet})` : ''}`);
+  return { spoken: say.join(' '), whatsapp: lines.join('\n'), sales: s, instagram: ig, agenda };
 }
 
 /** Call sir + WhatsApp the report. */
