@@ -32,7 +32,7 @@ function buildVariables(call, client) {
     booked_count: '-', booked_names: '-', callback_count: '-', rejected_count: '-', no_answer_count: '-', meets_scheduled: '-',
     campaign_name: '-', period: '-', total_calls: '-', websites_summary: '-', pending_approvals: '-', today_schedule: '-', notice: '-',
   };
-  if (['SUMMARY', 'UPDATE', 'NOTICE', 'REEL'].includes(call.type)) Object.assign(base, call.data || {});
+  if (['SUMMARY', 'UPDATE', 'NOTICE', 'REEL', 'VOICE_APPROVAL'].includes(call.type)) Object.assign(base, call.data || {});
   return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, String(v)]));
 }
 
@@ -169,6 +169,9 @@ function buildSpokenMessage(call, vars) {
   } else if (call.type === 'NOTICE') {
     parts.push(call.data?.notice || vars.notice || 'I have an update for you, sir.');
     parts.push('Anything you want me to do about it?');
+  } else if (call.type === 'VOICE_APPROVAL') {
+    parts.push(call.data?.notice || 'A customer on an AI call needs your decision, sir.');
+    parts.push('Say yes to approve or no to reject.');
   } else if (call.type === 'REEL') {
     parts.push(call.data?.notice || "Today's Instagram reel is ready, sir — I've sent it to your WhatsApp.");
     parts.push('Say yes and I will post it, or tell me what to change.');
@@ -339,6 +342,7 @@ async function processQueue() {
     await require('./campaignCallSync').syncCampaignCalls().catch((err) => logError(null, 'CAMPAIGN_CALL_SYNC', err));
     await require('./reels').reelsTick().catch((err) => logError(null, 'REELS_TICK', err));
     await require('./weeklyReport').weeklyTick().catch((err) => logError(null, 'WEEKLY_REPORT_TICK', err));
+    await require('./voice/orchestrator').tick().catch((err) => logError(null, 'VOICE_TICK', err));
     await pollSarvamCampaigns().catch((err) => logError(null, 'CAMPAIGN_STATUS_POLL', err));
     await maybeAutoUpdate().catch((err) => logError(null, 'AUTO_UPDATE', err));
     if (await prisma.ownerCall.count({ where: { status: 'CALLING' } })) return;
@@ -347,7 +351,7 @@ async function processQueue() {
     // Then summaries, then approvals in the order they were requested — only during calling hours.
     const due = { status: 'QUEUED', next_attempt_at: { lte: new Date() } };
     // Build/deploy news (NOTICE) also goes out right away — sir is waiting for it.
-    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: { in: ['UPDATE', 'NOTICE', 'REEL'] } }, orderBy: { created_at: 'asc' } });
+    let next = await prisma.ownerCall.findFirst({ where: { ...due, type: { in: ['UPDATE', 'NOTICE', 'REEL', 'VOICE_APPROVAL'] } }, orderBy: { created_at: 'asc' } });
     if (!next && inCallingHours()) {
       next = await prisma.ownerCall.findFirst({ where: due, orderBy: [{ type: 'asc' }, { created_at: 'asc' }] });
     }
@@ -388,6 +392,12 @@ async function executeApproved(callId) {
           ...(['CONVERTED', 'LOST'].includes(client.portal_status) ? {} : { portal_status: client.meeting_link ? 'MEETING_SCHEDULED' : 'PROPOSAL_SENT' }),
         },
       });
+    } else if (call.type === 'VOICE_APPROVAL') {
+      // The decision is recorded on the AI call; the agent/follow-up acts on it (no automatic promise to the customer).
+      if (call.data?.voice_call_id) {
+        await prisma.voiceCallEvent.create({ data: { call_id: call.data.voice_call_id, type: 'TOOL', data: { name: 'owner_decision', approved: true, kind: call.data.kind, request: call.data.request } } }).catch(() => {});
+      }
+      await logAction(call.client_id, 'VOICE_APPROVAL_APPROVED', `Sir approved: ${call.data?.kind} — ${call.data?.request || ''}`);
     } else if (call.type === 'REEL') {
       const reel = call.data?.reel_id ? await prisma.reel.findUnique({ where: { id: call.data.reel_id } }) : null;
       if (reel?.status === 'ready') await require('./reels').approveReel(reel.id, 'the call');

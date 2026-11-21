@@ -105,6 +105,10 @@ model Client {
   portal_proposal_link  String?
   portal_invite_link    String?
   portal_synced_at      DateTime? @db.Timestamptz(6)
+  // Infinity Voice: call eligibility (TRAI — no unsolicited automated calls without consent)
+  voice_consent         Boolean   @default(false) // agreed to receive calls from the AI agent
+  do_not_call           Boolean   @default(false) // opted out — never call again
+  consent_note          String?   @db.Text
   created_at        DateTime     @default(now()) @db.Timestamptz(6)
   updated_at        DateTime     @updatedAt @db.Timestamptz(6)
 
@@ -166,6 +170,7 @@ enum OwnerCallType {
   QUOTATION // approve sending a proposal to a client
   WEBSITE   // approve sending the live website link to a client
   REEL      // approve today's Instagram reel before it's posted
+  VOICE_APPROVAL // an Infinity Voice agent needs sir's decision (discount, custom quote, exception…)
 }
 
 enum OwnerCallStatus {
@@ -280,4 +285,105 @@ model AppSetting {
   updated_at DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("app_settings")
+}
+
+// ── Infinity Voice ─────────────────────────────────────────────────────────────────────────
+// AI phone agents that talk over sir's own phone (Bluetooth HFP via the local voice gateway).
+
+model VoiceAgent {
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  role             String   // SALES | RECEPTIONIST | FOLLOW_UP | SUPPORT
+  personality      String?  @db.Text
+  voice            String?  // TTS voice id on the gateway (e.g. a Piper model name)
+  language         String   @default("en-IN")
+  greeting         String   @db.Text
+  objectives       String?  @db.Text
+  escalation_rules String?  @db.Text
+  allowed_tools    String[] // tool names this agent may use
+  can_call_out     Boolean  @default(false)
+  active           Boolean  @default(true)
+  version          Int      @default(1)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @updatedAt @db.Timestamptz(6)
+
+  calls VoiceCall[]
+
+  @@map("voice_agents")
+}
+
+model VoiceCall {
+  id                  String    @id @default(uuid()) @db.Uuid
+  agent_id            String    @db.Uuid
+  client_id           String?   @db.Uuid
+  direction           String    // INBOUND | OUTBOUND
+  mode                String    // SIMULATED (test console) | LIVE (real phone line)
+  phone               String?
+  state               String    @default("CREATED")
+  attempts            Int       @default(0)
+  next_attempt_at     DateTime? @db.Timestamptz(6)
+  started_at          DateTime? @db.Timestamptz(6)
+  connected_at        DateTime? @db.Timestamptz(6)
+  ended_at            DateTime? @db.Timestamptz(6)
+  duration_seconds    Int?
+  outcome             String?   // BOOKED | INTERESTED | CALLBACK | NOT_INTERESTED | OPT_OUT | NO_ANSWER | BUSY | FAILED | INFO_ONLY
+  intent              String?
+  summary             String?   @db.Text
+  qualification_score Int?
+  objections          String?   @db.Text
+  next_action         String?   @db.Text
+  follow_up_at        DateTime? @db.Timestamptz(6)
+  transcript          Json?     // [{ role: customer|agent, text, final, at }]
+  ai_messages         Json?     // model conversation state (for continuing turns)
+  usage               Json?     // { input_tokens, output_tokens, turns, avg_latency_ms }
+  error               String?   @db.Text
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @updatedAt @db.Timestamptz(6)
+
+  agent  VoiceAgent       @relation(fields: [agent_id], references: [id])
+  events VoiceCallEvent[]
+
+  @@index([state, next_attempt_at])
+  @@index([client_id])
+  @@index([created_at])
+  @@map("voice_calls")
+}
+
+model VoiceCallEvent {
+  id      String   @id @default(uuid()) @db.Uuid
+  call_id String   @db.Uuid
+  type    String   // STATE | TURN | TOOL | GATEWAY | ERROR | LATENCY
+  data    Json?
+  at      DateTime @default(now()) @db.Timestamptz(6)
+
+  call VoiceCall @relation(fields: [call_id], references: [id], onDelete: Cascade)
+
+  @@index([call_id, at])
+  @@map("voice_call_events")
+}
+
+model VoiceKnowledge {
+  id         String   @id @default(uuid()) @db.Uuid
+  title      String
+  content    String   @db.Text
+  active     Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("voice_knowledge")
+}
+
+// Commands for the local voice gateway (it polls; the cloud never connects into sir's laptop).
+model VoiceGatewayCommand {
+  id         String   @id @default(uuid()) @db.Uuid
+  call_id    String?  @db.Uuid
+  command    String   // DIAL | ANSWER | HANGUP | REJECT
+  payload    Json?
+  status     String   @default("pending") // pending | sent | done | failed | expired
+  result     Json?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([status, created_at])
+  @@map("voice_gateway_commands")
 }

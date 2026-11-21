@@ -121,6 +121,9 @@ app.use('/api/approvals', requireAdmin, approvalRoutes);
 app.use('/api/calendar', requireAdmin, calendarRoutes);
 app.use('/api/whatsapp', requireAdmin, whatsappLinkRoutes);
 app.use('/api/reels', requireAdmin, require('./routes/reels'));
+// Infinity Voice: dashboard API (admin) + local voice gateway API (its own token)
+app.use('/api/voice', requireAdmin, require('./routes/voice').adminRouter);
+app.use('/voice-gateway', require('./routes/voice').gatewayRouter);
 // Weekly report preview / send now
 app.get('/api/reports/weekly', requireAdmin, async (req, res, next) => {
   try { res.json(await require('./services/weeklyReport').buildWeeklyReport()); } catch (err) { next(err); }

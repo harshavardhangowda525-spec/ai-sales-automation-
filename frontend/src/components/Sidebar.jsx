@@ -9,6 +9,7 @@ const NAV = [
   { to: '/whatsapp', label: 'WhatsApp', icon: 'send' },
   { to: '/contacts', label: 'Contacts', icon: 'users' },
   { to: '/reels', label: 'Reels', icon: 'send' },
+  { to: '/voice', label: 'Infinity Voice', icon: 'phone' },
 ];
 
 const linkClass = ({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${

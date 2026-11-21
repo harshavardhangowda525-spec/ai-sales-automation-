@@ -1,0 +1,12 @@
+{
+  "name": "infinity-voice-gateway",
+  "private": true,
+  "description": "Infinity Voice local gateway: POCO C55 over Bluetooth HFP (PipeWire telephony + CallScoot) ↔ Infinity backend",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/gateway.js",
+    "audit": "bash audit.sh",
+    "selftest": "node src/selftest.js",
+    "test": "node --test test/*.test.js"
+  }
+}
