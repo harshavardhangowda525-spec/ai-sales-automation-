@@ -187,7 +187,7 @@ jobs:
 
       - name: Check that real project files exist
         run: |
-          n=$(git ls-files | grep -vE '^(CLAUDE\\.md|README\\.md|PLAN\\.md|\\.github/)' | wc -l)
+          n=$(git ls-files | grep -vE '^(CLAUDE\\.md|README\\.md|PLAN\\.md|BRIEF\\.md|\\.github/)' | wc -l)
           echo "Project files: $n"
           if [ "$n" -lt 3 ]; then echo "::error::Claude did not create the project files"; exit 1; fi
 

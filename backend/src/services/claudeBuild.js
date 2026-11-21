@@ -16,8 +16,20 @@ function buildPrompt(client, { kind = 'website', instructions }) {
   const what = kind === 'mobile'
     ? `a mobile app for ${client.business_name} (React Native with Expo, Android and iOS, in a \`mobile/\` folder), based on the business details, requirements and plan scope in CLAUDE.md`
     : `the ${KIND_LABEL[kind] || 'website'} for ${client.business_name} exactly as described in CLAUDE.md in this repository`;
+  // Paid add-ons from the quotation (Jarvis / dashboard) are part of the scope.
+  const { ADDONS } = require('./quoteBuilder');
+  const addons = (client.quote?.addons || []).map((a) => ADDONS[a.key]?.name).filter(Boolean);
+  const brief = kind === 'mobile' ? null : [
+    'STEP 1 — PERSONALISED BRIEF (before any code). Write BRIEF.md: an elaborated, personalised creative brief for THIS business, as a senior agency strategist would.',
+    `Business: ${client.business_name}${client.contact_name ? ` (owner ${client.contact_name})` : ''}, Bengaluru. Requirements from the sales call: ${client.requirements || 'not captured — infer from the business name and type'}.`,
+    'Cover: what kind of business it is and who its customers are in Bengaluru (age, needs, what makes them choose a place like this); the brand personality and tone; 3 competitor-style benchmarks to beat (describe them, no copying); the full sitemap; for EVERY section the real headline, body copy and CTA text (no lorem ipsum; local, specific, persuasive); the colour palette (hex) and font pairing with reasons; the MOTION PLAN per section (hero entrance, scroll reveals, hover/tap micro-interactions, transitions, counters, marquee — with timings); imagery direction (which Unsplash searches, marked TODO to replace with the client\'s photos); conversion plan (WhatsApp, tap-to-call, booking/enquiry flow); and SEO keywords for their area.',
+    'You may use WebFetch to research this type of business and Bengaluru customer expectations. Keep BRIEF.md specific to this client — it is the source of truth for the build.',
+    'STEP 2 — BUILD exactly what BRIEF.md describes, to the design bar below. It must feel worth far more than the price — even on the Basic ₹4,999 plan.',
+  ].join('\n');
   return [
     `Build ${what}.`,
+    brief,
+    addons.length ? `PAID ADD-ONS in this client's quotation — build each one properly: ${addons.join('; ')}.` : null,
     'Follow the "How to work" section: write or update PLAN.md first, then build, then complete the README and the done checklist.',
     kind === 'mobile' ? 'Include clear steps in the README to run it with Expo Go and to make Android/iOS builds with EAS.' : null,
     'If the project already exists, continue from where it is and improve it rather than starting over.',
@@ -208,10 +220,20 @@ const hasPhone = (c) => String(c.phone_number || '').replace(/\D/g, '').length >
  * Step 1 — sir says "prepare / send the quotation for X": make the proposal, WhatsApp it to SIR only,
  * and park it as an approval. Nothing goes to the client until sir approves.
  */
-async function prepareQuotation(clientId, { phone = null, source = 'Jarvis call' } = {}) {
+async function prepareQuotation(clientId, { phone = null, source = 'Jarvis call', request = null } = {}) {
   let client = await prisma.client.findUnique({ where: { id: clientId } });
   client = await setPhoneIfGiven(client, phone);
-  const { generateProposal, PLANS } = require('./proposalGenerator');
+  // "basic website", "add online booking and a logo", "remove the logo" → plan + add-ons on the client.
+  const qb = require('./quoteBuilder');
+  if (request || !client.quote) {
+    const req = qb.parseRequest(request || '');
+    const base = client.quote || { plan: ['BASIC', 'PREMIUM', 'ADVANCED'].includes(client.plan_interest) ? client.plan_interest : null, addons: [] };
+    const quote = qb.applyRequest(base, req);
+    if (!quote.plan) quote.plan = ['BASIC', 'PREMIUM', 'ADVANCED'].includes(client.plan_interest) ? client.plan_interest : 'BASIC';
+    client = await prisma.client.update({ where: { id: client.id }, data: { quote, plan_interest: quote.plan } });
+  }
+  const priced = await qb.priceQuote(client.quote);
+  const { generateProposal } = require('./proposalGenerator');
   const proposal = await generateProposal(client);
   const fresh = await prisma.client.findUnique({ where: { id: client.id } });
   // Replace any older quotation still waiting for approval.
@@ -226,13 +248,13 @@ async function prepareQuotation(clientId, { phone = null, source = 'Jarvis call'
       decision_note: 'Waiting for your approval (sent to you on WhatsApp)',
     },
   });
-  const plan = PLANS[fresh.plan_interest];
-  const price = plan ? `${plan.name || fresh.plan_interest} ₹${plan.price}` : 'plan not set';
-  await notifyOwner(`📄 Sir, quotation *${proposal.number}* for *${fresh.business_name}* (${price}) is ready:\n${fresh.proposal_url}\n\n`
+  const price = `total ${qb.inr(priced.total)}`;
+  const breakdown = priced.lines.map((l) => `• ${l.name}: ${l.included ? 'included' : qb.inr(l.amount)}`).join('\n');
+  await notifyOwner(`📄 Sir, quotation *${proposal.number}* for *${fresh.business_name}* is ready:\n${breakdown}\n*Total: ${qb.inr(priced.total)}*\n${fresh.proposal_url}\n\n`
     + `It has NOT gone to the client yet. Tell Jarvis "approve the quotation for ${fresh.business_name}", or approve it in the dashboard.`
     + `${hasPhone(fresh) ? `\nIt will go to ${fresh.phone_number}.` : '\n⚠️ No client phone number saved yet — give Jarvis their number.'}`);
   await logAction(client.id, 'QUOTATION_PREPARED', `${proposal.number} sent to sir for approval (${source})`);
-  return { client: fresh, approval, number: proposal.number, price };
+  return { client: fresh, approval, number: proposal.number, price, priced, spoken: require("./quoteBuilder").describe(priced) };
 }
 
 /** Step 2 — sir approves: the prepared quotation goes to the client's registered number. */

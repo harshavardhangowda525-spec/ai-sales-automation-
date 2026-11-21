@@ -187,6 +187,24 @@ function drawPlan(doc, planKey, y, { recommended = false } = {}) {
   return y + boxH + 18;
 }
 
+/** Add-ons table + total (when the quotation has add-ons). */
+function drawQuoteTable(doc, priced, y) {
+  const rows = priced.lines.slice(1);
+  y = ensureSpace(doc, y, 60 + rows.length * 24);
+  y = sectionTitle(doc, 'Add-ons & total', y);
+  const inr = (n) => `₹${Number(n).toLocaleString('en-IN')}`;
+  for (const l of rows) {
+    doc.roundedRect(M, y, W, 22, 6).fill('#F9FAFB');
+    doc.font('medium').fontSize(10.5).fillColor(C.ink).text(l.name, M + 10, y + 6, { width: W - 120, lineBreak: false, ellipsis: true });
+    richText(doc, l.included ? 'Included' : inr(l.amount), M + 10, y + 6, { font: 'bold', size: 10.5, color: l.included ? C.muted : C.blue, width: W - 20, align: 'right' });
+    y += 26;
+  }
+  doc.roundedRect(M, y + 4, W, 34, 8).fill(C.blue);
+  doc.font('bold').fontSize(12).fillColor(C.white).text('TOTAL (one-time)', M + 14, y + 15);
+  richText(doc, inr(priced.total), M + 14, y + 12, { font: 'bold', size: 16, color: C.white, width: W - 28, align: 'right' });
+  return y + 50;
+}
+
 function drawOtherPlans(doc, exclude, y) {
   const others = Object.keys(PLANS).filter((k) => k !== exclude);
   y = ensureSpace(doc, y, 30 + others.length * 26);
@@ -289,7 +307,7 @@ function drawFooters(doc, number) {
 }
 
 /** Render the proposal PDF and return it as a Buffer. Pure — no DB access. */
-function renderProposalPdf({ client, number, date = formatDateIN(), meetingTime, meetLink }) {
+function renderProposalPdf({ client, number, date = formatDateIN(), meetingTime, meetLink, priced = null }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: [PAGE.width, PAGE.height],
@@ -310,10 +328,12 @@ function renderProposalPdf({ client, number, date = formatDateIN(), meetingTime,
 
     // PAGE 1 — header + proposed plan
     let y = drawHeader(doc, { number, date, client });
-    const planKey = PLANS[client.plan_interest] ? client.plan_interest : 'PREMIUM';
+    const chosen = priced?.plan || client.plan_interest;
+    const planKey = PLANS[chosen] ? chosen : 'PREMIUM';
     y = sectionTitle(doc, 'Proposed Plan', y);
-    y = drawPlan(doc, planKey, y, { recommended: !PLANS[client.plan_interest] });
-    if (!PLANS[client.plan_interest]) y = drawOtherPlans(doc, planKey, y);
+    y = drawPlan(doc, planKey, y, { recommended: !PLANS[chosen] });
+    if (priced && priced.lines.length > 1) y = drawQuoteTable(doc, priced, y);
+    else if (!PLANS[chosen]) y = drawOtherPlans(doc, planKey, y);
     drawRequirements(doc, client.requirements, y);
 
     // PAGE 2 — terms, process, closing
@@ -342,7 +362,10 @@ async function generateProposal(client) {
   const number = `IWA-${year}-${String(placeholder.seq).padStart(4, '0')}`;
 
   try {
+    let priced = null;
+    if (fresh.quote) priced = await require('./quoteBuilder').priceQuote(fresh.quote);
     const pdf = await renderProposalPdf({
+      priced,
       client: fresh,
       number,
       meetingTime: fresh.meeting_time,

@@ -523,9 +523,9 @@ async function quotationFor(client, src, res) {
           : `Approved and sent, sir. Quotation ${r.number || ''} has gone to ${client.business_name} on WhatsApp, ${r.client.phone_number}.`,
       });
     }
-    const r = await prepareQuotation(client.id, { phone, source: 'Jarvis call' });
+    const r = await prepareQuotation(client.id, { phone, source: 'Jarvis call', request: src.instructions || src.kind || '' });
     return res.json({
-      answer: `I've prepared quotation ${r.number} for ${client.business_name} (${r.price}) and sent it to your WhatsApp, sir. It hasn't gone to the client yet — shall I send it to them?`
+      answer: `I've prepared quotation ${r.number} for ${client.business_name}: ${r.spoken}. It's on your WhatsApp, sir — it hasn't gone to the client yet. Want to add anything, or shall I send it?`
         + (String(r.client.phone_number).replace(/\D/g, '').length >= 10 ? '' : ' I will also need their phone number.'),
     });
   } catch (err) {

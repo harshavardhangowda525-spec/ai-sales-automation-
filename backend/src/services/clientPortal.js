@@ -19,8 +19,10 @@ function firstName(client) {
 
 /** Create client + proposal in the portal and publish it. Requires client.email. */
 async function pushToPortal(client) {
-  const plan = PLANS[client.plan_interest] ? client.plan_interest : 'BASIC';
+  const priced = client.quote ? await require('./quoteBuilder').priceQuote(client.quote) : null;
+  const plan = priced?.plan || (PLANS[client.plan_interest] ? client.plan_interest : 'BASIC');
   const p = PLANS[plan];
+  const extras = priced ? priced.lines.slice(1).map((l) => `${l.name}${l.included ? ' (included)' : ` — ₹${l.amount.toLocaleString('en-IN')}`}`) : [];
   const res = await fetch(`${config.clientPortalUrl.replace(/\/$/, '')}/api/integrations/sales-lead`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${config.portalIntegrationSecret}`, 'Content-Type': 'application/json' },
@@ -31,9 +33,9 @@ async function pushToPortal(client) {
       phone: client.phone_number !== '-' ? client.phone_number : null,
       plan,
       kind: 'website',
-      plan_price: Number(String(p.price).replace(/,/g, '')),
-      plan_name: `${p.name} website`,
-      plan_features: p.features,
+      plan_price: priced ? priced.total : Number(String(p.price).replace(/,/g, '')),
+      plan_name: `${p.name} website${extras.length ? ' + add-ons' : ''}`,
+      plan_features: [...p.features, ...extras],
       requirements: client.requirements || null,
       meeting: client.meeting_time ? formatMeetingTime(client.meeting_time) : null,
     }),
