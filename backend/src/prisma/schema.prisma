@@ -280,6 +280,18 @@ model Reel {
   @@map("reels")
 }
 
+// Clips of a UGC ad uploaded one by one (by the Claude task on sir's laptop) before they are joined.
+model UgcClip {
+  id         String   @id @default(uuid()) @db.Uuid
+  reel_id    String   @db.Uuid
+  n          Int      // 1..3
+  data       Bytes
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([reel_id, n])
+  @@map("ugc_clips")
+}
+
 // Small key/value store for settings the server updates itself (e.g. refreshed Instagram token).
 model AppSetting {
   key        String   @id

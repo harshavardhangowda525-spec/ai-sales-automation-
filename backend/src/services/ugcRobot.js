@@ -45,6 +45,7 @@ const MARK = 'ugc-robot';
 
 /** Called by requestReel when REELS_ENGINE=ugc_robot: the reel waits for the robot to pick it up. */
 async function queueForRobot(reel) {
+  await prisma.ugcClip.deleteMany({ where: { reel_id: reel.id } });
   const updated = await prisma.reel.update({ where: { id: reel.id }, data: { run_url: `${MARK}:queued`, topic: reel.instructions && reel.topic ? reel.topic : scenarioFor(reel.day) } });
   await logAction(null, 'REEL_STARTED', `UGC ad for ${reel.day} queued for the Gemini robot: ${updated.topic}`);
   return updated;
@@ -58,9 +59,58 @@ async function nextJob() {
   if (!claimed.count) return null;
   return {
     reel_id: reel.id, day: reel.day, speaker: reel.topic, writer_prompt: writerPrompt(reel),
-    clips: 3, seconds_per_clip: 12, aspect_ratio: '9:16',
+    clips: CLIPS, seconds_per_clip: 12, aspect_ratio: '9:16',
+    script_url: `${config.publicBaseUrl}/ugc-robot/script?reel_id=${reel.id}`,
+    clip_url: `${config.publicBaseUrl}/ugc-robot/clip?reel_id=${reel.id}&n=`,
     upload_url: `${config.publicBaseUrl}/webhook/reels/upload?reel_id=${reel.id}${config.webhookSecret ? `&secret=${encodeURIComponent(config.webhookSecret)}` : ''}`,
   };
+}
+
+const CLIPS = 3;
+const checkId = (id) => { if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw Object.assign(new Error('reel_id is missing or invalid'), { status: 400 }); };
+
+/** Claude (on sir's laptop) sends the script it wrote: topic + caption. */
+async function saveScript(reelId, { topic, caption } = {}) {
+  checkId(reelId);
+  const reel = await prisma.reel.findUnique({ where: { id: reelId }, select: { id: true, status: true } });
+  if (!reel) throw Object.assign(new Error('Unknown reel'), { status: 404 });
+  if (reel.status !== 'generating') throw Object.assign(new Error(`This reel is ${reel.status}`), { status: 409 });
+  if (!caption) throw Object.assign(new Error('caption is required'), { status: 400 });
+  await prisma.reel.update({ where: { id: reelId }, data: { caption: String(caption).slice(0, 2200), ...(topic ? { topic: String(topic).slice(0, 300) } : {}), run_url: `${MARK}:working:${new Date().toISOString()}` } });
+  return maybeFinish(reelId);
+}
+
+/** One clip (1..3). When all clips and the caption are in, they are joined and sent for approval. */
+async function saveClip(reelId, n, data) {
+  checkId(reelId);
+  n = Number(n);
+  if (!(n >= 1 && n <= CLIPS)) throw Object.assign(new Error(`n must be 1..${CLIPS}`), { status: 400 });
+  if (!Buffer.isBuffer(data) || data.length < 50000) throw Object.assign(new Error('That is not a video file (too small)'), { status: 400 });
+  const reel = await prisma.reel.findUnique({ where: { id: reelId }, select: { id: true, status: true } });
+  if (!reel) throw Object.assign(new Error('Unknown reel'), { status: 404 });
+  if (reel.status !== 'generating') throw Object.assign(new Error(`This reel is ${reel.status}`), { status: 409 });
+  await prisma.ugcClip.upsert({ where: { reel_id_n: { reel_id: reelId, n } }, create: { reel_id: reelId, n, data }, update: { data, created_at: new Date() } });
+  await prisma.reel.update({ where: { id: reelId }, data: { run_url: `${MARK}:working:${new Date().toISOString()}` } });
+  return maybeFinish(reelId);
+}
+
+let finishing = new Set();
+async function maybeFinish(reelId) {
+  const reel = await prisma.reel.findUnique({ where: { id: reelId }, select: { id: true, caption: true, topic: true, status: true } });
+  const clips = await prisma.ugcClip.findMany({ where: { reel_id: reelId }, orderBy: { n: 'asc' } });
+  const have = clips.map((c) => c.n);
+  if (clips.length < CLIPS || !reel.caption) return { received: have, caption: Boolean(reel.caption), done: false };
+  if (finishing.has(reelId)) return { received: have, caption: true, done: false, joining: true };
+  finishing.add(reelId);
+  try {
+    const video = await require('./videoStitch').stitchClips(clips.map((c) => Buffer.from(c.data)));
+    const meta = Buffer.from(JSON.stringify({ topic: reel.topic, caption: reel.caption })).toString('base64');
+    await require('./reels').handleReelUpload({ reelId, video, meta, runUrl: `${MARK}:done` });
+    await prisma.ugcClip.deleteMany({ where: { reel_id: reelId } });
+    return { received: have, caption: true, done: true, size_kb: Math.round(video.length / 1024), message: 'Joined and sent to sir for approval (Jarvis is calling).' };
+  } finally {
+    finishing.delete(reelId);
+  }
 }
 
 async function heartbeat(status = {}) {
@@ -89,7 +139,7 @@ async function watchdog(now = new Date()) {
     const queued = r.run_url === `${MARK}:queued`;
     if ((queued && age > 20 * 60000) || (!queued && age > 75 * 60000)) {
       const st = await robotStatus();
-      const why = queued ? `the Gemini robot ${st.online ? 'did not pick up the job' : 'is offline'}` : 'the Gemini robot did not finish in time';
+      const why = queued ? 'the Claude task on your laptop did not start (is the laptop on with Claude open?)' : 'the Claude task on your laptop did not finish in time';
       await prisma.reel.update({ where: { id: r.id }, data: { status: 'failed', error: why } });
       const reels = require('./reels');
       await reels.notifyOwner?.(`⚠️ Sir, today's UGC ad couldn't be made: ${why}${st.error ? ` (${String(st.error).slice(0, 200)})` : ''}. Tell Jarvis "make today's reel again" to retry.`);
@@ -99,4 +149,4 @@ async function watchdog(now = new Date()) {
   }
 }
 
-module.exports = { queueForRobot, nextJob, heartbeat, robotStatus, watchdog, writerPrompt, scenarioFor, MARK };
+module.exports = { queueForRobot, nextJob, saveScript, saveClip, heartbeat, robotStatus, watchdog, writerPrompt, scenarioFor, MARK };

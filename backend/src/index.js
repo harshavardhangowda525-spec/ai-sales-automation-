@@ -125,7 +125,7 @@ app.use('/api/reels', requireAdmin, require('./routes/reels'));
 app.use('/api/voice', requireAdmin, require('./routes/voice').adminRouter);
 app.use('/voice-gateway', require('./routes/voice').gatewayRouter);
 // UGC robot (ugc-robot/ on the Oracle machine): bearer UGC_ROBOT_TOKEN
-app.use('/ugc-robot', express.json({ limit: '100kb' }), (req, res, next) => {
+app.use('/ugc-robot', (req, res, next) => (req.path === '/clip' ? next() : express.json({ limit: '100kb' })(req, res, next)), (req, res, next) => {
   const t = config.reels.robotToken;
   if (!t) return res.status(503).json({ error: 'UGC_ROBOT_TOKEN is not set on the server' });
   if (req.get('authorization') !== `Bearer ${t}`) return res.status(401).json({ error: 'bad token' });
@@ -135,6 +135,8 @@ app.use('/ugc-robot', express.json({ limit: '100kb' }), (req, res, next) => {
   const robot = require('./services/ugcRobot');
   r.post('/heartbeat', async (req, res, next) => { try { await robot.heartbeat(req.body || {}); res.json({ ok: true, engine: config.reels.engine }); } catch (e) { next(e); } });
   r.post('/next', async (req, res, next) => { try { res.json({ job: await robot.nextJob() }); } catch (e) { next(e); } });
+  r.post('/script', async (req, res, next) => { try { res.json(await robot.saveScript(String(req.query.reel_id || req.body?.reel_id || ''), req.body || {})); } catch (e) { e.status ? res.status(e.status).json({ error: e.message }) : next(e); } });
+  r.post('/clip', express.raw({ type: () => true, limit: '60mb' }), async (req, res, next) => { try { res.json(await robot.saveClip(String(req.query.reel_id || ''), req.query.n, req.body)); } catch (e) { e.status ? res.status(e.status).json({ error: e.message }) : next(e); } });
   return r;
 })());
 // Weekly report preview / send now
