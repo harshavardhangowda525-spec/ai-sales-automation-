@@ -80,4 +80,9 @@ router.post('/upload', express.raw({ type: 'video/mp4', limit: '80mb' }), async 
   } catch (err) { next(err); }
 });
 
+// GET /api/reels/robot — is the Gemini UGC robot online, and which engine makes the reels
+router.get('/robot', async (req, res, next) => {
+  try { res.json({ engine: require('../lib/config').reels.engine, ...(await require('../services/ugcRobot').robotStatus()) }); } catch (err) { next(err); }
+});
+
 module.exports = router;

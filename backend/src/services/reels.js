@@ -215,7 +215,7 @@ function reelPrompt(day, topic, instructions) {
 
 /** Start today's reel (or redo it with sir's changes). */
 async function requestReel({ day = todayIST(), instructions = null, source = 'schedule' } = {}) {
-  if (!config.isConfigured.reels) throw Object.assign(new Error('Reels need GITHUB_TOKEN and CLAUDE_CODE_OAUTH_TOKEN on the server'), { status: 400 });
+  if (!config.isConfigured.reels) throw Object.assign(new Error(config.reels.engine === 'ugc_robot' ? 'UGC ads need UGC_ROBOT_TOKEN on the server' : 'Reels need GITHUB_TOKEN and CLAUDE_CODE_OAUTH_TOKEN on the server'), { status: 400 });
   const existing = await prisma.reel.findUnique({ where: { day } });
   if (existing && ['posting', 'posted'].includes(existing.status)) {
     throw Object.assign(new Error(`Today's reel is already ${existing.status}`), { status: 409 });
@@ -229,6 +229,7 @@ async function requestReel({ day = todayIST(), instructions = null, source = 'sc
   const reel = existing
     ? await prisma.reel.update({ where: { id: existing.id }, data: { status: 'generating', instructions, error: null, video: null, video_size: null, approved_at: null } })
     : await prisma.reel.create({ data: { day, topic, instructions } });
+  if (config.reels.engine === 'ugc_robot') return require('./ugcRobot').queueForRobot(reel);
   try {
     const repo = await ensureReelsRepo();
     const { gh } = require('./github');
@@ -477,12 +478,13 @@ async function reelsTick(now = new Date()) {
     const stuck = existing?.status === 'generating' && !existing.run_url && Date.now() - existing.updated_at.getTime() > 3 * 60000;
     if (!existing || stuck) await requestReel({ day, source: stuck ? 'restart after interrupted setup' : 'daily 5 PM schedule' }).catch(() => {});
   }
+  if (config.reels.engine === 'ugc_robot') await require('./ugcRobot').watchdog(now).catch((err) => logError(null, 'UGC_ROBOT_WATCHDOG', err));
   await postDueReels().catch((err) => logError(null, 'REEL_POST', err));
   await syncReelCalendar(now).catch((err) => logError(null, 'REEL_CALENDAR', err));
   await refreshTokenIfDue().catch((err) => logError(null, 'INSTAGRAM_TOKEN_REFRESH', err));
 }
 
 module.exports = {
-  requestReel, handleReelUpload, approveReel, rejectReel, publishReel, postDueReels, reelsTick, latestOpenReel,
+  requestReel, handleReelUpload, notifyOwner, approveReel, rejectReel, publishReel, postDueReels, reelsTick, latestOpenReel,
   todayIST, topicFor, reelVideoUrl, ensureReelsRepo, REEL_WORKFLOW, getSetting, setSetting, postTimeToday, syncReelCalendar, ig, igUserId,
 };

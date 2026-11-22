@@ -90,6 +90,10 @@ const config = {
     postHour: Number(env('REELS_POST_HOUR', 19)),
     postMinute: Number(env('REELS_POST_MINUTE', 30)),
     ctaPhone: env('REELS_CTA_PHONE'),              // shown in the reel; defaults to HARSHAVARDHAN_PHONE
+    // 'ugc_robot' = UGC ads made on sir's Gemini subscription by the robot browser (ugc-robot/);
+    // 'coded' = the old Remotion reels coded by Claude on GitHub Actions.
+    engine: env('REELS_ENGINE', 'coded'),
+    robotToken: env('UGC_ROBOT_TOKEN'),
   },
 
   // GitHub: one private repo per client website (fine-grained token with Administration + Contents write)
@@ -116,7 +120,7 @@ config.isConfigured = {
   claudeBuilds: Boolean(config.github.token && config.claudeCodeToken),
   clientPortal: Boolean(config.clientPortalUrl && config.portalIntegrationSecret),
   vercelPreviews: Boolean(config.vercel.token),
-  reels: Boolean(config.reels.enabled && config.github.token && config.claudeCodeToken),
+  reels: Boolean(config.reels.enabled && (config.reels.engine === 'ugc_robot' ? config.reels.robotToken : config.github.token && config.claudeCodeToken)),
   instagram: Boolean(config.instagram.token),
 };
 

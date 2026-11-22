@@ -48,7 +48,8 @@ async function getPreviousInteractions(clientId, limit = 8) {
 
 function inCallingHours(now = new Date()) {
   const { hour, weekday } = istParts(now);
-  return weekday !== 0 && hour >= CALL_START_HOUR && hour < CALL_END_HOUR;
+  const sundayOk = process.env.VOICE_CALL_ON_SUNDAY === 'true';
+  return (weekday !== 0 || sundayOk) && hour >= CALL_START_HOUR && hour < CALL_END_HOUR;
 }
 
 /**

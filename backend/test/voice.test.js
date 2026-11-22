@@ -9,6 +9,7 @@ delete process.env.ANTHROPIC_API_KEY;
 process.env.HARSHAVARDHAN_PHONE = '';
 process.env.VOICE_CALL_START_HOUR = '0'; // tests may run at any hour
 process.env.VOICE_CALL_END_HOUR = '24';
+process.env.VOICE_CALL_ON_SUNDAY = 'true';
 
 const prisma = require('../src/lib/prisma');
 const orch = require('../src/services/voice/orchestrator');

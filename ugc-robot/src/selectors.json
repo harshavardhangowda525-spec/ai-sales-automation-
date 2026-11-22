@@ -1,0 +1,19 @@
+{
+  "_note": "Google changes these pages often. Run `npm run probe` to save screenshots + the page structure to WORK_DIR/probe, then adjust these values. Each entry is a list: the first one that is visible is used.",
+  "gemini": {
+    "url": "https://gemini.google.com/app",
+    "input": ["div[contenteditable='true'][role='textbox']", "rich-textarea div[contenteditable='true']", "textarea"],
+    "send": ["button[aria-label*='Send']", "button[aria-label*='send']"],
+    "response": ["message-content", "model-response", "[data-response-index]"],
+    "busy": ["button[aria-label*='Stop']", "[aria-label*='Stop response']"]
+  },
+  "flow": {
+    "url": "https://labs.google/fx/tools/flow",
+    "newProject": ["text=New project", "button:has-text('New project')"],
+    "prompt": ["textarea", "div[contenteditable='true']"],
+    "aspect": ["text=9:16", "button:has-text('9:16')", "[aria-label*='Portrait']"],
+    "settings": ["button[aria-label*='Settings']", "button:has-text('Settings')", "[aria-label*='settings']"],
+    "generate": ["button[aria-label*='Generate']", "button:has-text('Generate')", "button[aria-label*='Create']"],
+    "outputsPerPrompt1": ["text=Outputs per prompt", "[aria-label*='Outputs per prompt']"]
+  }
+}

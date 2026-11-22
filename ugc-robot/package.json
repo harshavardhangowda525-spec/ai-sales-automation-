@@ -1,0 +1,14 @@
+{
+  "name": "ugc-robot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Makes the daily UGC ad on sir's Gemini subscription (Gemini app + Google Flow) and hands it to the Infinity backend for approval and posting.",
+  "main": "src/robot.js",
+  "scripts": {
+    "start": "node src/robot.js",
+    "probe": "node src/robot.js --probe",
+    "once": "node src/robot.js --once"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": { "playwright-core": "1.48.2" }
+}
