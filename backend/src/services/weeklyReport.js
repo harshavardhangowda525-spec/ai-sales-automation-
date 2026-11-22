@@ -1,4 +1,4 @@
-// Weekly report: every Sunday 8 PM IST Jarvis calls sir with the week's sales + Instagram results,
+// Weekly report: every Sunday 12:30 PM IST Jarvis calls sir with the week's sales + Instagram results,
 // and the full report goes to his WhatsApp. Followers are snapshotted daily (Instagram only offers
 // follower history to accounts with 100+ followers).
 const config = require('../lib/config');
@@ -7,7 +7,8 @@ const { logAction, logError } = require('../lib/logger');
 const { istParts, istDate } = require('../lib/time');
 
 const REPORT_DAY = Number(process.env.WEEKLY_REPORT_WEEKDAY ?? 0); // 0 = Sunday
-const REPORT_HOUR = Number(process.env.WEEKLY_REPORT_HOUR ?? 20);  // 8 PM IST
+const REPORT_HOUR = Number(process.env.WEEKLY_REPORT_HOUR ?? 12);  // 12:30 PM IST (afternoon, not night)
+const REPORT_MINUTE = Number(process.env.WEEKLY_REPORT_MINUTE ?? 30);
 const GOAL_LIKES = Number(process.env.REELS_GOAL_LIKES ?? 20);      // a reel "hit the target" at this many likes…
 const GOAL_VIEWS = Number(process.env.REELS_GOAL_VIEWS ?? 500);     // …or this many views
 
@@ -249,7 +250,7 @@ async function weeklyTick(now = new Date()) {
   lastTick = now.getTime();
   await snapshotFollowers(now).catch(() => {});
   const p = istParts(now);
-  if (p.weekday !== REPORT_DAY || p.hour < REPORT_HOUR || p.hour >= 23) return;
+  if (p.weekday !== REPORT_DAY || p.hour * 60 + p.minute < REPORT_HOUR * 60 + REPORT_MINUTE || p.hour >= 19) return;
   const key = `weekly_report_${dayKey(now)}`;
   if (await reels().getSetting(key)) return;
   await reels().setSetting(key, new Date().toISOString());
