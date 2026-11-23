@@ -10,11 +10,47 @@ const SLOT_HOURS = { morning: 10, afternoon: 15, evening: 18 };
 const WORK_START = 9;
 const WORK_END = 20; // last meeting must start before 20:00 IST
 
+// A refresh token saved by the in-app reconnect (/auth/google) wins over GOOGLE_REFRESH_TOKEN.
+let savedRefreshToken = null;
+async function loadSavedToken() {
+  try {
+    savedRefreshToken = (await prisma.appSetting.findUnique({ where: { key: 'google_refresh_token' } }))?.value || null;
+  } catch { /* keep the env token */ }
+  return savedRefreshToken;
+}
+loadSavedToken();
+setInterval(loadSavedToken, 5 * 60000).unref();
+
+function reconnectRedirectUri() {
+  return `${config.publicBaseUrl}/oauth2callback`;
+}
+
 function getAuthClient() {
   const { clientId, clientSecret, redirectUri, refreshToken } = config.google;
   const oauth2 = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
-  oauth2.setCredentials({ refresh_token: refreshToken });
+  oauth2.setCredentials({ refresh_token: savedRefreshToken || refreshToken });
   return oauth2;
+}
+
+const stateFor = () => crypto.createHmac('sha256', String(config.adminToken || config.google.clientSecret)).update('google-reconnect').digest('hex').slice(0, 32);
+
+/** Google consent URL for reconnecting the calendar (offline access, always re-consent → new refresh token). */
+function reconnectUrl() {
+  const { clientId, clientSecret } = config.google;
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret, reconnectRedirectUri());
+  return oauth2.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/calendar'], state: stateFor() });
+}
+
+async function finishReconnect(code, state) {
+  if (state !== stateFor()) throw Object.assign(new Error('Invalid link, start again from /auth/google'), { status: 400 });
+  const { clientId, clientSecret } = config.google;
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret, reconnectRedirectUri());
+  const { tokens } = await oauth2.getToken(code);
+  if (!tokens.refresh_token) throw new Error('Google did not return a refresh token; remove the app at myaccount.google.com/permissions and try again');
+  await prisma.appSetting.upsert({ where: { key: 'google_refresh_token' }, create: { key: 'google_refresh_token', value: tokens.refresh_token }, update: { value: tokens.refresh_token } });
+  savedRefreshToken = tokens.refresh_token;
+  await logAction(null, 'GOOGLE_RECONNECTED', 'Google Calendar reconnected');
+  return true;
 }
 
 function calendarApi() {
@@ -284,4 +320,4 @@ async function addCalendarEvent({ title, start, minutes = 30, description }) {
   return data;
 }
 
-module.exports = { scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule, addCalendarEvent, listGoogleEvents };
+module.exports = { reconnectUrl, finishReconnect, reconnectRedirectUri, scheduleGoogleMeet, computeStartTime, getAuthClient, listUpcomingSchedule, addCalendarEvent, listGoogleEvents };

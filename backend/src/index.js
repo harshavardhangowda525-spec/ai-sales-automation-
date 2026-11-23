@@ -73,6 +73,22 @@ app.use(express.json({ limit: '5mb' }));
 
 app.get('/', (req, res) => res.json({ service: 'Infinity Web & Apps — sales automation', status: 'ok' }));
 
+// Reconnect Google Calendar from the phone: /auth/google?key=<ADMIN_TOKEN> → Google consent → /oauth2callback
+app.get('/auth/google', (req, res) => {
+  if (!config.adminToken || req.query.key !== config.adminToken) return res.status(401).send('Add ?key=<admin token> to the link');
+  res.redirect(require('./services/googleCalendar').reconnectUrl());
+});
+app.get('/oauth2callback', async (req, res) => {
+  try {
+    if (req.query.error) return res.status(400).send(`Google said: ${String(req.query.error).slice(0, 100)}`);
+    await require('./services/googleCalendar').finishReconnect(String(req.query.code || ''), String(req.query.state || ''));
+    res.send('<h2 style="font-family:sans-serif">✅ Google Calendar reconnected. Jarvis can add events again. You can close this tab.</h2>');
+  } catch (err) {
+    await logError(null, 'GOOGLE_RECONNECT', err);
+    res.status(err.status || 500).send(`Reconnect failed: ${String(err.message).slice(0, 300)}`);
+  }
+});
+
 app.get('/health', async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
